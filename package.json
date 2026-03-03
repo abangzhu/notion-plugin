@@ -1,0 +1,16 @@
+{
+  "name": "notion-wechat-ios",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "esbuild src/background.ts src/content.ts --bundle --outdir=dist --target=chrome114 --format=esm",
+    "dev": "esbuild src/background.ts src/content.ts --bundle --outdir=dist --target=chrome114 --format=esm --watch",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.0.261",
+    "esbuild": "^0.20.2",
+    "typescript": "^5.4.5"
+  }
+}

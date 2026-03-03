@@ -1,0 +1,77 @@
+export type Doc = {
+  title?: string;
+  blocks: Block[];
+};
+
+export type Block =
+  | HeadingBlock
+  | ParagraphBlock
+  | ListBlock
+  | QuoteBlock
+  | DividerBlock
+  | ImageBlock
+  | CodeBlock
+  | TableBlock;
+
+export type HeadingBlock = {
+  type: "heading";
+  level: 1 | 2 | 3;
+  children: Inline[];
+};
+
+export type ParagraphBlock = {
+  type: "paragraph";
+  children: Inline[];
+};
+
+export type QuoteBlock = {
+  type: "quote";
+  children: Inline[];
+};
+
+export type DividerBlock = {
+  type: "divider";
+};
+
+export type ImageBlock = {
+  type: "image";
+  src: string;
+  alt?: string;
+};
+
+export type CodeBlock = {
+  type: "code";
+  code: string;
+  language?: string;
+};
+
+export type TableBlock = {
+  type: "table";
+  rows: TableRow[];
+};
+
+export type TableRow = {
+  cells: TableCell[];
+};
+
+export type TableCell = {
+  children: Inline[];
+};
+
+export type ListBlock = {
+  type: "list";
+  ordered: boolean;
+  items: ListItem[];
+};
+
+export type ListItem = {
+  children: Inline[];
+  nested?: ListBlock[];
+};
+
+export type Inline =
+  | { type: "text"; content: string }
+  | { type: "bold"; content: string }
+  | { type: "italic"; content: string }
+  | { type: "code"; content: string }
+  | { type: "link"; content: string; href: string };
