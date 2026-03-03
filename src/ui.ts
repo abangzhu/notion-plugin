@@ -58,7 +58,17 @@ const THEME_PRESETS: ThemePreset[] = [
       divider: "#797979"
     }
   },
-  { id: "black", label: "科技黑", colors: { link: "#111827", border: "#111827", divider: "#111827" } },
+  {
+    id: "black",
+    label: "科技黑",
+    colors: {
+      text: "#3f3f3f",
+      subText: "#3f3f3f",
+      link: "#222222",
+      border: "#222222",
+      divider: "#797979"
+    }
+  },
   { id: "sspai", label: "少数派", colors: { link: "#16a34a", border: "#86efac", divider: "#dcfce7" } }
 ];
 
@@ -125,7 +135,7 @@ const createDrawer = () => {
   container.style.top = "0";
   container.style.right = "0";
   container.style.height = "100vh";
-  container.style.width = "624px";
+  container.style.width = "686px";
   container.style.zIndex = "2147483647";
   container.style.background = "#f5f5f5";
   container.style.boxShadow = "-4px 0 20px rgba(0,0,0,0.12)";

@@ -86,6 +86,7 @@ const inlineToHtml = (
 ): string => {
   const isPineapple = options.themeId === "red";
   const isBlue = options.themeId === "blue";
+  const isBlack = options.themeId === "black";
   const isAccentTheme = isPineapple || isBlue;
   switch (inline.type) {
     case "text":
@@ -102,7 +103,7 @@ const inlineToHtml = (
       const href = normalizeHref(inline.href);
       const index = indexMap?.get(href);
       const sup = index ? `<sup style="font-size:0.8em;">[${index}]</sup>` : "";
-      return `<a href="${escapeHtml(href)}" style="color:${options.colors.link};${isAccentTheme ? "text-decoration:none;border-bottom:1px solid " + options.colors.link + ";" : "text-decoration:underline;"}">${escapeHtml(
+      return `<a href="${escapeHtml(href)}" style="color:${options.colors.link};${isAccentTheme || isBlack ? "text-decoration:none;border-bottom:1px solid " + options.colors.link + ";" : "text-decoration:underline;"}">${escapeHtml(
         inline.content
       )}${sup}</a>`;
     default:
@@ -188,10 +189,32 @@ const blockToHtml = (
   const h3Size = Math.round(baseSize * 1.13);
   const isPineapple = options.themeId === "red";
   const isBlue = options.themeId === "blue";
+  const isBlack = options.themeId === "black";
   const isAccentTheme = isPineapple || isBlue;
   switch (block.type) {
     case "heading": {
       const tag = block.level === 1 ? "h1" : block.level === 2 ? "h2" : "h3";
+      if (isBlack) {
+        if (block.level === 1) {
+          return `<${tag} style="line-height:1.5;font-size:${h1Size}px;font-family:${options.fontStack};font-weight:700;margin:0 auto ${Math.round(baseSize * 2.6)}px;width:fit-content;color:${options.colors.link};text-align:center;padding:0 1em;border-bottom:8px solid ${options.colors.link};">${inlinesToHtml(
+            block.children,
+            options,
+            indexMap
+          )}</${tag}>`;
+        }
+        if (block.level === 2) {
+          return `<${tag} style="line-height:1.5;font-family:${options.fontStack};font-size:${h2Size}px;font-weight:700;margin:${Math.round(baseSize * 2.6)}px auto;width:fit-content;color:${options.colors.link};text-align:center;padding:0 0.2em;">${inlinesToHtml(
+            block.children,
+            options,
+            indexMap
+          )}</${tag}>`;
+        }
+        return `<${tag} style="line-height:1.5;font-family:${options.fontStack};font-size:${h3Size}px;font-weight:700;margin:${Math.round(baseSize * 2.6)}px 0;width:fit-content;color:${options.colors.link};text-align:left;">${inlinesToHtml(
+          block.children,
+          options,
+          indexMap
+        )}</${tag}>`;
+      }
       if (isAccentTheme) {
         const accentBorder = isBlue ? "#7bb7e0" : options.colors.link;
         const headingMargin = Math.round(baseSize * 2.6);
@@ -234,13 +257,20 @@ const blockToHtml = (
         indexMap
       )}</p>`;
     case "quote":
+      if (isBlack) {
+        return `<blockquote style="font-family:${options.fontStack};border-left:8px solid ${options.colors.border};padding:10px;margin:20px 0;background-color:#f5f5f5;color:${options.colors.subText};line-height:${options.typography.bodyLineHeight};">${inlinesToHtml(
+          block.children,
+          options,
+          indexMap
+        )}</blockquote>`;
+      }
       return `<blockquote style="font-family:${options.fontStack};border-left:${isAccentTheme ? "3px" : "4px"} solid ${options.colors.border};padding:${isAccentTheme ? "1px 10px 1px 20px" : "0 0 0 12px"};margin:${isAccentTheme ? "20px 0" : "16px 0"};color:${options.colors.subText};line-height:${options.typography.bodyLineHeight};">${inlinesToHtml(
         block.children,
         options,
         indexMap
       )}</blockquote>`;
     case "divider":
-      return isAccentTheme
+      return isAccentTheme || isBlack
         ? `<hr style="border-style:solid;border-width:1px 0 0;border-color:${options.colors.divider};transform-origin:0 0;transform:scale(1,0.5);" />`
         : `<hr style="border:none;border-top:1px solid ${options.colors.divider};margin:16px 0;" />`;
     case "image":
