@@ -368,6 +368,7 @@ export const initDrawer = () => {
     const images = Array.from(wrapper.querySelectorAll("img"));
     let uploaded = 0;
     let failed = 0;
+    let lastError: string | null = null;
 
     for (const image of images) {
       const src = image.getAttribute("src") ?? "";
@@ -379,12 +380,16 @@ export const initDrawer = () => {
           { type: "uploadImage", src, apiKey, base64 },
           (response) => {
             if (chrome.runtime.lastError) {
+              lastError = chrome.runtime.lastError.message ?? null;
               resolve(null);
               return;
             }
             if (response?.success && response?.url) {
               resolve(response.url as string);
               return;
+            }
+            if (response?.error) {
+              lastError = response.error as string;
             }
             resolve(null);
           }
@@ -398,7 +403,7 @@ export const initDrawer = () => {
       }
     }
 
-    return { html: wrapper.innerHTML, uploaded, failed };
+    return { html: wrapper.innerHTML, uploaded, failed, lastError };
   };
 
   const computeTypography = (): Typography => {
@@ -568,12 +573,17 @@ export const initDrawer = () => {
           return;
         }
         setStatus("正在上传图片…", "info");
-        const { html, uploaded, failed } = await replaceImagesWithImgBB(lastHtml, apiKey);
+        const { html, uploaded, failed, lastError } = await replaceImagesWithImgBB(lastHtml, apiKey);
         await writeClipboard(html, lastText);
         if (uploaded > 0) {
           setStatus(`已复制为公众号格式（已上传 ${uploaded} 张图片）`, "success");
         } else if (failed > 0) {
-          setStatus("已复制为公众号格式（部分图片上传失败）", "error");
+          setStatus(
+            lastError
+              ? `已复制为公众号格式（图片上传失败：${lastError}）`
+              : "已复制为公众号格式（部分图片上传失败）",
+            "error"
+          );
         } else {
           setStatus("已复制为公众号格式", "success");
         }

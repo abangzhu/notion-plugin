@@ -48,9 +48,11 @@ const uploadToImgBB = async (base64: string, apiKey: string): Promise<string> =>
   const data = (await uploadResponse.json()) as {
     success: boolean;
     data?: { url?: string; display_url?: string };
+    error?: { message?: string };
   };
   if (!data.success || !data.data?.url) {
-    throw new Error("ImgBB upload failed");
+    const message = data.error?.message ?? "ImgBB upload failed";
+    throw new Error(message);
   }
   return data.data.url ?? data.data.display_url ?? "";
 };
