@@ -2,6 +2,11 @@ import { mergeRenderOptions } from "./theme";
 import type { RenderOptions } from "./theme";
 import type { Block, Doc, Inline, ListBlock, ListItem, TableBlock } from "./types";
 
+type ReferenceItem = {
+  href: string;
+  text: string;
+};
+
 const escapeHtml = (input: string): string =>
   input
     .replace(/&/g, "&amp;")
@@ -10,7 +15,75 @@ const escapeHtml = (input: string): string =>
     .replace(/\"/g, "&quot;")
     .replace(/'/g, "&#39;");
 
-const inlineToHtml = (inline: Inline, options: RenderOptions): string => {
+const normalizeHref = (href: string): string => href.trim();
+
+const collectReferencesFromInlines = (
+  inlines: Inline[],
+  items: ReferenceItem[],
+  indexMap: Map<string, number>
+) => {
+  inlines.forEach((inline) => {
+    if (inline.type !== "link") return;
+    const href = normalizeHref(inline.href);
+    if (!href) return;
+    if (!indexMap.has(href)) {
+      indexMap.set(href, items.length + 1);
+      items.push({ href, text: inline.content });
+    }
+  });
+};
+
+const collectReferencesFromList = (
+  list: ListBlock,
+  items: ReferenceItem[],
+  indexMap: Map<string, number>
+) => {
+  list.items.forEach((item) => {
+    collectReferencesFromInlines(item.children, items, indexMap);
+    item.nested?.forEach((nested) => collectReferencesFromList(nested, items, indexMap));
+  });
+};
+
+const collectReferencesFromTable = (
+  table: TableBlock,
+  items: ReferenceItem[],
+  indexMap: Map<string, number>
+) => {
+  table.rows.forEach((row) => {
+    row.cells.forEach((cell) => collectReferencesFromInlines(cell.children, items, indexMap));
+  });
+};
+
+const collectReferences = (doc: Doc): { items: ReferenceItem[]; indexMap: Map<string, number> } => {
+  const items: ReferenceItem[] = [];
+  const indexMap = new Map<string, number>();
+
+  doc.blocks.forEach((block) => {
+    switch (block.type) {
+      case "heading":
+      case "paragraph":
+      case "quote":
+        collectReferencesFromInlines(block.children, items, indexMap);
+        break;
+      case "list":
+        collectReferencesFromList(block, items, indexMap);
+        break;
+      case "table":
+        collectReferencesFromTable(block, items, indexMap);
+        break;
+      default:
+        break;
+    }
+  });
+
+  return { items, indexMap };
+};
+
+const inlineToHtml = (
+  inline: Inline,
+  options: RenderOptions,
+  indexMap?: Map<string, number>
+): string => {
   const isPineapple = options.themeId === "red";
   switch (inline.type) {
     case "text":
@@ -24,28 +97,61 @@ const inlineToHtml = (inline: Inline, options: RenderOptions): string => {
     case "code":
       return `<code style="font-family:Menlo, Monaco, Consolas, monospace;background:${options.colors.inlineCodeBg};padding:2px 4px;border-radius:4px;font-size:0.95em;">${escapeHtml(inline.content)}</code>`;
     case "link":
-      return `<a href="${escapeHtml(inline.href)}" style="color:${options.colors.link};${isPineapple ? "text-decoration:none;border-bottom:1px solid " + options.colors.link + ";" : "text-decoration:underline;"}">${escapeHtml(inline.content)}</a>`;
+      const href = normalizeHref(inline.href);
+      const index = indexMap?.get(href);
+      const sup = index ? `<sup style="font-size:0.8em;">[${index}]</sup>` : "";
+      return `<a href="${escapeHtml(href)}" style="color:${options.colors.link};${isPineapple ? "text-decoration:none;border-bottom:1px solid " + options.colors.link + ";" : "text-decoration:underline;"}">${escapeHtml(
+        inline.content
+      )}${sup}</a>`;
     default:
       return "";
   }
 };
 
-const inlinesToHtml = (inlines: Inline[], options: RenderOptions): string =>
-  inlines.map((inline) => inlineToHtml(inline, options)).join("");
+const inlinesToHtml = (
+  inlines: Inline[],
+  options: RenderOptions,
+  indexMap?: Map<string, number>
+): string => inlines.map((inline) => inlineToHtml(inline, options, indexMap)).join("");
 
-const listItemToHtml = (item: ListItem, options: RenderOptions): string => {
-  const nestedHtml = item.nested?.map((nested) => listToHtml(nested, options)).join("") ?? "";
-  return `<li style="margin-bottom:6px;">${inlinesToHtml(item.children, options)}${nestedHtml}</li>`;
+const listItemToHtml = (
+  item: ListItem,
+  options: RenderOptions,
+  depth: number,
+  indexMap?: Map<string, number>
+): string => {
+  const nestedHtml =
+    item.nested?.map((nested) => listToHtml(nested, options, depth + 1, indexMap)).join("") ?? "";
+  return `<li style="margin:6px 0;">${inlinesToHtml(item.children, options, indexMap)}${nestedHtml}</li>`;
 };
 
-const listToHtml = (list: ListBlock, options: RenderOptions): string => {
-  const isPineapple = options.themeId === "red";
+const listToHtml = (
+  list: ListBlock,
+  options: RenderOptions,
+  depth = 0,
+  indexMap?: Map<string, number>
+): string => {
   const tag = list.ordered ? "ol" : "ul";
-  const listItems = list.items.map((item) => listItemToHtml(item, options)).join("");
-  return `<${tag} style="font-family:${options.fontStack};padding-left:20px;margin:0 0 ${isPineapple ? "8px" : options.typography.bodyMarginBottom} 0;line-height:${options.typography.bodyLineHeight};color:${options.colors.text};${options.typography.letterSpacing ? `letter-spacing:${options.typography.letterSpacing};` : ""}">${listItems}</${tag}>`;
+  const listStyleType = list.ordered
+    ? depth === 0
+      ? "decimal"
+      : depth === 1
+        ? "lower-alpha"
+        : "lower-roman"
+    : depth === 0
+      ? "disc"
+      : depth === 1
+        ? "circle"
+        : "square";
+  const listItems = list.items.map((item) => listItemToHtml(item, options, depth, indexMap)).join("");
+  return `<${tag} style="font-family:${options.fontStack};font-size:${options.typography.bodySize};padding-left:1.5em;margin:10px 0;color:${options.colors.text};line-height:${options.typography.bodyLineHeight};list-style-type:${listStyleType};list-style-position:outside;${options.typography.letterSpacing ? `letter-spacing:${options.typography.letterSpacing};` : ""}">${listItems}</${tag}>`;
 };
 
-const tableToHtml = (table: TableBlock, options: RenderOptions): string => {
+const tableToHtml = (
+  table: TableBlock,
+  options: RenderOptions,
+  indexMap?: Map<string, number>
+): string => {
   const rows = table.rows;
   const columnCount = rows.reduce((max, row) => Math.max(max, row.cells.length), 0) || 1;
   const widthPercent = Math.floor(100 / columnCount);
@@ -55,7 +161,8 @@ const tableToHtml = (table: TableBlock, options: RenderOptions): string => {
         .map((cell) => {
           return `<td style="word-break:break-all;font-family:${options.fontStack};font-size:${options.typography.bodySize};vertical-align:top;width:${widthPercent}%;border:1px solid ${options.colors.divider};padding:6px 8px;${options.typography.letterSpacing ? `letter-spacing:${options.typography.letterSpacing};` : ""}">${inlinesToHtml(
             cell.children,
-            options
+            options,
+            indexMap
           )}</td>`;
         })
         .join("");
@@ -66,7 +173,11 @@ const tableToHtml = (table: TableBlock, options: RenderOptions): string => {
   return `<table style="font-size:${options.typography.bodySize};margin:10px 0;line-height:${options.typography.bodyLineHeight};border-collapse:collapse;width:100%;border:1px solid ${options.colors.divider};">${tbody}</table>`;
 };
 
-const blockToHtml = (block: Block, options: RenderOptions): string => {
+const blockToHtml = (
+  block: Block,
+  options: RenderOptions,
+  indexMap?: Map<string, number>
+): string => {
   const baseSize = Number.parseFloat(options.typography.bodySize) || 16;
   const h1Size = Math.round(baseSize * 1.6);
   const h2Size = Math.round(baseSize * 1.33);
@@ -79,40 +190,47 @@ const blockToHtml = (block: Block, options: RenderOptions): string => {
         if (block.level === 1) {
           return `<${tag} style="line-height:${options.typography.bodyLineHeight};font-size:${h1Size}px;font-family:${options.fontStack};font-weight:700;margin:0 auto ${Math.round(baseSize * 2.6)}px;width:fit-content;color:${options.colors.link};text-align:center;padding:0 1em;border-bottom:2px solid ${options.colors.link};">${inlinesToHtml(
             block.children,
-            options
+            options,
+            indexMap
           )}</${tag}>`;
         }
         if (block.level === 2) {
           return `<${tag} style="line-height:${options.typography.bodyLineHeight};font-family:${options.fontStack};font-size:${h2Size}px;font-weight:700;margin:${Math.round(baseSize * 2.6)}px auto;width:fit-content;background:${options.colors.link};color:#fff;text-align:center;padding:0 0.2em;">${inlinesToHtml(
             block.children,
-            options
+            options,
+            indexMap
           )}</${tag}>`;
         }
         return `<${tag} style="line-height:${options.typography.bodyLineHeight};font-family:${options.fontStack};font-size:${h3Size}px;font-weight:700;margin:${Math.round(baseSize * 2.6)}px 0;width:fit-content;color:#000;padding-left:8px;border-left:3px solid ${options.colors.link};">${inlinesToHtml(
           block.children,
-          options
+          options,
+          indexMap
         )}</${tag}>`;
       }
       const fontSize =
         block.level === 1 ? `${h1Size}px` : block.level === 2 ? `${h2Size}px` : `${h3Size}px`;
       const marginTop = block.level === 1 ? `${Math.round(baseSize * 1.6)}px` : `${Math.round(baseSize * 1.4)}px`;
       const marginBottom = block.level === 1 ? `${Math.round(baseSize * 0.9)}px` : `${Math.round(baseSize * 0.8)}px`;
-      return `<${tag} style="font-family:${options.fontStack};font-size:${fontSize};font-weight:${options.typography.headingWeight};margin:${marginTop} 0 ${marginBottom} 0;line-height:1.5;color:${options.colors.text};">${inlinesToHtml(block.children, options)}</${tag}>`;
+      return `<${tag} style="font-family:${options.fontStack};font-size:${fontSize};font-weight:${options.typography.headingWeight};margin:${marginTop} 0 ${marginBottom} 0;line-height:1.5;color:${options.colors.text};">${inlinesToHtml(
+        block.children,
+        options,
+        indexMap
+      )}</${tag}>`;
     }
     case "paragraph":
       return `<p style="font-family:${options.fontStack};font-size:${options.typography.bodySize};line-height:${options.typography.bodyLineHeight};margin:10px 0;color:${options.colors.text};font-weight:${options.typography.bodyWeight};${options.typography.letterSpacing ? `letter-spacing:${options.typography.letterSpacing};` : ""}text-align:left;white-space:pre-line;min-height:20px;padding-left:0em;">${inlinesToHtml(
         block.children,
-        options
+        options,
+        indexMap
       )}</p>`;
     case "quote":
       return `<blockquote style="font-family:${options.fontStack};border-left:${isPineapple ? "3px" : "4px"} solid ${options.colors.border};padding:${isPineapple ? "1px 10px 1px 20px" : "0 0 0 12px"};margin:${isPineapple ? "20px 0" : "16px 0"};color:${options.colors.subText};line-height:${options.typography.bodyLineHeight};">${inlinesToHtml(
         block.children,
-        options
+        options,
+        indexMap
       )}</blockquote>`;
     case "divider":
-      return isPineapple
-        ? `<hr style="border-style:solid;border-width:1px 0 0;border-color:${options.colors.divider};transform-origin:0 0;transform:scale(1,0.5);" />`
-        : `<hr style="border:none;border-top:1px solid ${options.colors.divider};margin:24px 0;" />`;
+      return `<hr style="border:none;border-top:1px solid ${options.colors.divider};margin:16px 0;" />`;
     case "image":
       return `<p style="text-align:center;margin:16px 0;"><img src="${escapeHtml(block.src)}" alt="${escapeHtml(block.alt ?? "")}" style="max-width:100%;border-radius:6px;" /></p>`;
     case "code":
@@ -122,28 +240,62 @@ const blockToHtml = (block: Block, options: RenderOptions): string => {
           )}</pre>`
         : `<pre style="font-family:Menlo, Monaco, Consolas, monospace;background:${options.colors.codeBg};padding:12px;overflow-x:auto;border-radius:6px;font-size:13px;line-height:1.6;">${escapeHtml(block.code)}</pre>`;
     case "list":
-      return listToHtml(block, options);
+      return listToHtml(block, options, 0, indexMap);
     case "table":
-      return tableToHtml(block, options);
+      return tableToHtml(block, options, indexMap);
     default:
       return "";
   }
 };
 
-export const renderDocToHtml = (doc: Doc, overrides?: Partial<RenderOptions>): string => {
-  const options = mergeRenderOptions(overrides);
-  return doc.blocks.map((block) => blockToHtml(block, options)).join("");
+const renderReferencesSection = (
+  items: ReferenceItem[],
+  options: RenderOptions,
+  indexMap: Map<string, number>
+): string => {
+  if (items.length === 0) return "";
+  const headingHtml = blockToHtml(
+    { type: "heading", level: 3, children: [{ type: "text", content: "参考资料" }] },
+    options,
+    indexMap
+  );
+  const itemHtml = items
+    .map((item, idx) => {
+      return `<p style="font-family:${options.fontStack};font-size:${options.typography.bodySize};line-height:${options.typography.bodyLineHeight};margin:6px 0;color:${options.colors.text};${options.typography.letterSpacing ? `letter-spacing:${options.typography.letterSpacing};` : ""}"><span style="opacity:0.6;">[${idx + 1}]</span> 链接: <em>${escapeHtml(
+        item.href
+      )}</em></p>`;
+    })
+    .join("");
+  return `${headingHtml}${itemHtml}`;
 };
 
-const inlineToText = (inline: Inline): string => inline.content;
+export const renderDocToHtml = (doc: Doc, overrides?: Partial<RenderOptions>): string => {
+  const options = mergeRenderOptions(overrides);
+  const { items, indexMap } = collectReferences(doc);
+  const bodyHtml = doc.blocks.map((block) => blockToHtml(block, options, indexMap)).join("");
+  const referencesHtml = renderReferencesSection(items, options, indexMap);
+  return `${bodyHtml}${referencesHtml}`;
+};
 
-const listToText = (list: ListBlock, depth = 0): string => {
+const inlineToText = (inline: Inline, indexMap: Map<string, number>): string => {
+  if (inline.type === "link") {
+    const href = normalizeHref(inline.href);
+    const index = indexMap.get(href);
+    return index ? `${inline.content}[${index}]` : inline.content;
+  }
+  return inline.content;
+};
+
+const inlinesToText = (inlines: Inline[], indexMap: Map<string, number>): string =>
+  inlines.map((inline) => inlineToText(inline, indexMap)).join("");
+
+const listToText = (list: ListBlock, indexMap: Map<string, number>, depth = 0): string => {
   const prefix = list.ordered ? (index: number) => `${index + 1}. ` : () => "- ";
   return list.items
     .map((item, idx) => {
-      const itemText = item.children.map(inlineToText).join("");
+      const itemText = inlinesToText(item.children, indexMap);
       const nestedText = item.nested
-        ? "\n" + item.nested.map((nested) => listToText(nested, depth + 1)).join("\n")
+        ? "\n" + item.nested.map((nested) => listToText(nested, indexMap, depth + 1)).join("\n")
         : "";
       const indent = "  ".repeat(depth);
       return `${indent}${prefix(idx)}${itemText}${nestedText}`;
@@ -151,14 +303,15 @@ const listToText = (list: ListBlock, depth = 0): string => {
     .join("\n");
 };
 
-export const renderDocToText = (doc: Doc): string =>
-  doc.blocks
+export const renderDocToText = (doc: Doc): string => {
+  const { items, indexMap } = collectReferences(doc);
+  const bodyText = doc.blocks
     .map((block) => {
       switch (block.type) {
         case "heading":
         case "paragraph":
         case "quote":
-          return block.children.map(inlineToText).join("");
+          return inlinesToText(block.children, indexMap);
         case "divider":
           return "---";
         case "image":
@@ -166,13 +319,20 @@ export const renderDocToText = (doc: Doc): string =>
         case "code":
           return block.code;
         case "list":
-          return listToText(block);
+          return listToText(block, indexMap);
         case "table":
           return block.rows
-            .map((row) => row.cells.map((cell) => cell.children.map(inlineToText).join("")).join(" | "))
+            .map((row) =>
+              row.cells.map((cell) => inlinesToText(cell.children, indexMap)).join(" | ")
+            )
             .join("\n");
         default:
           return "";
       }
     })
     .join("\n\n");
+
+  if (items.length === 0) return bodyText;
+  const referencesText = items.map((item, idx) => `[${idx + 1}] ${item.href}`).join("\n");
+  return `${bodyText}\n\n参考资料\n${referencesText}`;
+};

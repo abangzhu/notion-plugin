@@ -1,4 +1,4 @@
-# Notion to WeChat (iOS Optimized)
+# Notion2WeChat
 
 ## Setup
 

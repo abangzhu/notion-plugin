@@ -201,18 +201,12 @@ const createDrawer = () => {
   rowBottom.style.display = "flex";
   rowBottom.style.alignItems = "center";
   rowBottom.style.justifyContent = "flex-start";
-  rowBottom.style.gap = "12px";
 
   const status = document.createElement("div");
   status.style.fontSize = "12px";
   status.style.color = "#6b7280";
   status.textContent = "";
-
-  const refreshButton = createButton("刷新", "ghost");
-  const copyAllButton = createButton("复制全文", "primary");
   rowBottom.appendChild(status);
-  rowBottom.appendChild(refreshButton);
-  rowBottom.appendChild(copyAllButton);
 
   toolbar.appendChild(rowTop);
   toolbar.appendChild(rowBottom);
@@ -232,8 +226,23 @@ const createDrawer = () => {
 
   previewScroll.appendChild(previewPage);
 
+  const footer = document.createElement("div");
+  footer.style.padding = "12px 16px";
+  footer.style.background = "#ffffff";
+  footer.style.borderTop = "1px solid #ededed";
+  footer.style.display = "flex";
+  footer.style.alignItems = "center";
+  footer.style.gap = "12px";
+  footer.style.justifyContent = "flex-start";
+
+  const refreshButton = createButton("刷新", "ghost");
+  const copyAllButton = createButton("复制为公众号格式", "primary");
+  footer.appendChild(refreshButton);
+  footer.appendChild(copyAllButton);
+
   container.appendChild(toolbar);
   container.appendChild(previewScroll);
+  container.appendChild(footer);
 
   return {
     container,
@@ -431,7 +440,7 @@ export const initDrawer = () => {
     created.copyAllButton.addEventListener("click", async () => {
       try {
         await writeClipboard(lastHtml, lastText);
-        setStatus("已复制全文", "success");
+        setStatus("已复制为公众号格式", "success");
       } catch (error) {
         setStatus("复制失败，请重试", "error");
       }
