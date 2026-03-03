@@ -115,7 +115,7 @@ const createDrawer = () => {
   container.style.top = "0";
   container.style.right = "0";
   container.style.height = "100vh";
-  container.style.width = "520px";
+  container.style.width = "624px";
   container.style.zIndex = "2147483647";
   container.style.background = "#f5f5f5";
   container.style.boxShadow = "-4px 0 20px rgba(0,0,0,0.12)";
@@ -200,26 +200,19 @@ const createDrawer = () => {
   const rowBottom = document.createElement("div");
   rowBottom.style.display = "flex";
   rowBottom.style.alignItems = "center";
-  rowBottom.style.justifyContent = "space-between";
+  rowBottom.style.justifyContent = "flex-start";
+  rowBottom.style.gap = "12px";
 
   const status = document.createElement("div");
   status.style.fontSize = "12px";
   status.style.color = "#6b7280";
   status.textContent = "";
 
-  const actions = document.createElement("div");
-  actions.style.display = "flex";
-  actions.style.alignItems = "center";
-  actions.style.gap = "8px";
-
   const refreshButton = createButton("刷新", "ghost");
   const copyAllButton = createButton("复制全文", "primary");
-
-  actions.appendChild(refreshButton);
-  actions.appendChild(copyAllButton);
-
   rowBottom.appendChild(status);
-  rowBottom.appendChild(actions);
+  rowBottom.appendChild(refreshButton);
+  rowBottom.appendChild(copyAllButton);
 
   toolbar.appendChild(rowTop);
   toolbar.appendChild(rowBottom);
