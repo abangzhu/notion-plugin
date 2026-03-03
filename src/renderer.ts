@@ -53,7 +53,7 @@ const tableToHtml = (table: TableBlock, options: RenderOptions): string => {
     .map((row) => {
       const cells = row.cells
         .map((cell) => {
-          return `<td style="word-break:break-all;font-family:${options.fontStack};font-size:${options.typography.bodySize};vertical-align:top;width:${widthPercent}%;${options.typography.letterSpacing ? `letter-spacing:${options.typography.letterSpacing};` : ""}">${inlinesToHtml(
+          return `<td style="word-break:break-all;font-family:${options.fontStack};font-size:${options.typography.bodySize};vertical-align:top;width:${widthPercent}%;border:1px solid ${options.colors.divider};padding:6px 8px;${options.typography.letterSpacing ? `letter-spacing:${options.typography.letterSpacing};` : ""}">${inlinesToHtml(
             cell.children,
             options
           )}</td>`;
@@ -63,7 +63,7 @@ const tableToHtml = (table: TableBlock, options: RenderOptions): string => {
     })
     .join("");
 
-  return `<table style="font-size:${options.typography.bodySize};margin:10px 0;line-height:${options.typography.bodyLineHeight};">${tbody}</table>`;
+  return `<table style="font-size:${options.typography.bodySize};margin:10px 0;line-height:${options.typography.bodyLineHeight};border-collapse:collapse;width:100%;border:1px solid ${options.colors.divider};">${tbody}</table>`;
 };
 
 const blockToHtml = (block: Block, options: RenderOptions): string => {
