@@ -13,6 +13,7 @@ import type { RenderOptions, ThemeColors, Typography } from "./theme";
 const DRAWER_ID = "__notion_wechat_drawer";
 const DRAWER_STYLE_ID = "__notion_wechat_drawer_style";
 const ACCENT = "#10b981";
+const IMG_BB_KEY = "imgbb_api_key";
 
 type ThemePreset = {
   id: string;
@@ -304,11 +305,76 @@ export const initDrawer = () => {
   let currentTheme = THEME_PRESETS[0];
   let currentFont = FONT_PRESETS[0];
   let fontScale = 1;
+  let cachedApiKey: string | null = null;
 
   const setStatus = (message: string, tone: "info" | "success" | "error" = "info") => {
     if (!status) return;
     status.textContent = message;
     status.style.color = tone === "success" ? "#047857" : tone === "error" ? "#b91c1c" : "#6b7280";
+  };
+
+  const getApiKey = async (): Promise<string | null> => {
+    if (cachedApiKey) return cachedApiKey;
+    return new Promise((resolve) => {
+      chrome.storage.local.get([IMG_BB_KEY], (result) => {
+        const key = (result[IMG_BB_KEY] as string | undefined)?.trim();
+        cachedApiKey = key || null;
+        resolve(cachedApiKey);
+      });
+    });
+  };
+
+  const setApiKey = async (value: string) =>
+    new Promise<void>((resolve) => {
+      cachedApiKey = value.trim() || null;
+      chrome.storage.local.set({ [IMG_BB_KEY]: cachedApiKey }, () => resolve());
+    });
+
+  const ensureApiKey = async (): Promise<string | null> => {
+    let key = await getApiKey();
+    if (key) return key;
+    const input = window.prompt("Enter ImgBB API key to upload images:");
+    if (!input) return null;
+    await setApiKey(input);
+    return input.trim();
+  };
+
+  const uploadImage = (src: string, apiKey: string): Promise<string | null> =>
+    new Promise((resolve) => {
+      chrome.runtime.sendMessage({ type: "uploadImage", src, apiKey }, (response) => {
+        if (chrome.runtime.lastError) {
+          resolve(null);
+          return;
+        }
+        if (response?.success && response?.url) {
+          resolve(response.url as string);
+          return;
+        }
+        resolve(null);
+      });
+    });
+
+  const replaceImagesWithImgBB = async (html: string, apiKey: string) => {
+    const wrapper = document.createElement("div");
+    wrapper.innerHTML = html;
+    const images = Array.from(wrapper.querySelectorAll("img"));
+    let uploaded = 0;
+    let failed = 0;
+
+    for (const image of images) {
+      const src = image.getAttribute("src") ?? "";
+      if (!src || src.startsWith("data:")) continue;
+      if (src.includes("i.ibb.co") || src.includes("ibb.co")) continue;
+      const uploadedUrl = await uploadImage(src, apiKey);
+      if (uploadedUrl) {
+        image.setAttribute("src", uploadedUrl);
+        uploaded += 1;
+      } else {
+        failed += 1;
+      }
+    }
+
+    return { html: wrapper.innerHTML, uploaded, failed };
   };
 
   const computeTypography = (): Typography => {
@@ -472,8 +538,21 @@ export const initDrawer = () => {
 
     created.copyAllButton.addEventListener("click", async () => {
       try {
-        await writeClipboard(lastHtml, lastText);
-        setStatus("已复制为公众号格式", "success");
+        const apiKey = await ensureApiKey();
+        if (!apiKey) {
+          setStatus("需要 ImgBB API Key 才能上传图片", "error");
+          return;
+        }
+        setStatus("正在上传图片…", "info");
+        const { html, uploaded, failed } = await replaceImagesWithImgBB(lastHtml, apiKey);
+        await writeClipboard(html, lastText);
+        if (uploaded > 0) {
+          setStatus(`已复制为公众号格式（已上传 ${uploaded} 张图片）`, "success");
+        } else if (failed > 0) {
+          setStatus("已复制为公众号格式（部分图片上传失败）", "error");
+        } else {
+          setStatus("已复制为公众号格式", "success");
+        }
       } catch (error) {
         setStatus("复制失败，请重试", "error");
       }
