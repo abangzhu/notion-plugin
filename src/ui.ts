@@ -13,7 +13,6 @@ import type { RenderOptions, ThemeColors, Typography } from "./theme";
 const DRAWER_ID = "__notion_wechat_drawer";
 const DRAWER_STYLE_ID = "__notion_wechat_drawer_style";
 const ACCENT = "#10b981";
-const IMG_BB_KEY = "imgbb_api_key";
 
 type ThemePreset = {
   id: string;
@@ -305,105 +304,11 @@ export const initDrawer = () => {
   let currentTheme = THEME_PRESETS[0];
   let currentFont = FONT_PRESETS[0];
   let fontScale = 1;
-  let cachedApiKey: string | null = null;
 
   const setStatus = (message: string, tone: "info" | "success" | "error" = "info") => {
     if (!status) return;
     status.textContent = message;
     status.style.color = tone === "success" ? "#047857" : tone === "error" ? "#b91c1c" : "#6b7280";
-  };
-
-  const getApiKey = async (): Promise<string | null> => {
-    if (cachedApiKey) return cachedApiKey;
-    return new Promise((resolve) => {
-      chrome.storage.local.get([IMG_BB_KEY], (result) => {
-        const key = (result[IMG_BB_KEY] as string | undefined)?.trim();
-        cachedApiKey = key || null;
-        resolve(cachedApiKey);
-      });
-    });
-  };
-
-  const setApiKey = async (value: string) =>
-    new Promise<void>((resolve) => {
-      cachedApiKey = value.trim() || null;
-      chrome.storage.local.set({ [IMG_BB_KEY]: cachedApiKey }, () => resolve());
-    });
-
-  const ensureApiKey = async (): Promise<string | null> => {
-    let key = await getApiKey();
-    if (key) return key;
-    const input = window.prompt("Enter ImgBB API key to upload images:");
-    if (!input) return null;
-    await setApiKey(input);
-    return input.trim();
-  };
-
-  const blobToBase64 = (blob: Blob): Promise<string | null> =>
-    new Promise((resolve) => {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        const result = typeof reader.result === "string" ? reader.result : "";
-        const base64 = result.includes(",") ? result.split(",")[1] : "";
-        resolve(base64 || null);
-      };
-      reader.onerror = () => resolve(null);
-      reader.readAsDataURL(blob);
-    });
-
-  const fetchImageBase64 = async (src: string): Promise<string | null> => {
-    try {
-      const response = await fetch(src, { credentials: "include" });
-      if (!response.ok) return null;
-      const blob = await response.blob();
-      return await blobToBase64(blob);
-    } catch (error) {
-      return null;
-    }
-  };
-
-  const replaceImagesWithImgBB = async (html: string, apiKey: string) => {
-    const wrapper = document.createElement("div");
-    wrapper.innerHTML = html;
-    const images = Array.from(wrapper.querySelectorAll("img"));
-    let uploaded = 0;
-    let failed = 0;
-    let lastError: string | null = null;
-
-    for (const image of images) {
-      const src = image.getAttribute("src") ?? "";
-      if (!src || src.startsWith("data:")) continue;
-      if (src.includes("i.ibb.co") || src.includes("ibb.co")) continue;
-      const base64 = await fetchImageBase64(src);
-      const uploadedUrl = await new Promise<string | null>((resolve) => {
-        chrome.runtime.sendMessage(
-          { type: "uploadImage", src, apiKey, base64 },
-          (response) => {
-            if (chrome.runtime.lastError) {
-              lastError = chrome.runtime.lastError.message ?? null;
-              resolve(null);
-              return;
-            }
-            if (response?.success && response?.url) {
-              resolve(response.url as string);
-              return;
-            }
-            if (response?.error) {
-              lastError = response.error as string;
-            }
-            resolve(null);
-          }
-        );
-      });
-      if (uploadedUrl) {
-        image.setAttribute("src", uploadedUrl);
-        uploaded += 1;
-      } else {
-        failed += 1;
-      }
-    }
-
-    return { html: wrapper.innerHTML, uploaded, failed, lastError };
   };
 
   const computeTypography = (): Typography => {
@@ -567,26 +472,8 @@ export const initDrawer = () => {
 
     created.copyAllButton.addEventListener("click", async () => {
       try {
-        const apiKey = await ensureApiKey();
-        if (!apiKey) {
-          setStatus("需要 ImgBB API Key 才能上传图片", "error");
-          return;
-        }
-        setStatus("正在上传图片…", "info");
-        const { html, uploaded, failed, lastError } = await replaceImagesWithImgBB(lastHtml, apiKey);
-        await writeClipboard(html, lastText);
-        if (uploaded > 0) {
-          setStatus(`已复制为公众号格式（已上传 ${uploaded} 张图片）`, "success");
-        } else if (failed > 0) {
-          const errorMessage = lastError?.toLowerCase().includes("failed to fetch")
-            ? "已复制为公众号格式（ImgBB 无法访问，请更换国内图床或使用代理）"
-            : lastError
-              ? `已复制为公众号格式（图片上传失败：${lastError}）`
-              : "已复制为公众号格式（部分图片上传失败）";
-          setStatus(errorMessage, "error");
-        } else {
-          setStatus("已复制为公众号格式", "success");
-        }
+        await writeClipboard(lastHtml, lastText);
+        setStatus("已复制为公众号格式", "success");
       } catch (error) {
         setStatus("复制失败，请重试", "error");
       }
