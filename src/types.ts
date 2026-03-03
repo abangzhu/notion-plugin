@@ -70,8 +70,8 @@ export type ListItem = {
 };
 
 export type Inline =
-  | { type: "text"; content: string }
-  | { type: "bold"; content: string }
-  | { type: "italic"; content: string }
+  | { type: "text"; content: string; color?: "accent" }
+  | { type: "bold"; content: string; color?: "accent" }
+  | { type: "italic"; content: string; color?: "accent" }
   | { type: "code"; content: string }
   | { type: "link"; content: string; href: string };

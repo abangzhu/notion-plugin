@@ -2,8 +2,39 @@ import type { Block, Doc, Inline, ListBlock, ListItem, TableBlock, TableRow } fr
 
 const isElement = (node: Node): node is HTMLElement => node.nodeType === Node.ELEMENT_NODE;
 
-const textNodeToInline = (text: string): Inline[] =>
-  text ? [{ type: "text", content: text }] : [];
+const textNodeToInline = (text: string, accent = false): Inline[] =>
+  text ? [{ type: "text", content: text, ...(accent ? { color: "accent" } : {}) }] : [];
+
+const COLOR_CLASS_PATTERN =
+  /(notion-|color-)(red|orange|yellow|green|blue|purple|pink|brown|gray|grey)/i;
+
+const parseRgb = (value: string): { r: number; g: number; b: number } | null => {
+  const match = value.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/i);
+  if (!match) return null;
+  return {
+    r: Number.parseInt(match[1], 10),
+    g: Number.parseInt(match[2], 10),
+    b: Number.parseInt(match[3], 10)
+  };
+};
+
+const isAccentColor = (value: string): boolean => {
+  const rgb = parseRgb(value);
+  if (!rgb) return false;
+  const max = Math.max(rgb.r, rgb.g, rgb.b);
+  const min = Math.min(rgb.r, rgb.g, rgb.b);
+  if (max - min < 20) return false; // grayscale / default
+  return true;
+};
+
+const hasAccentColor = (node: Node): boolean => {
+  const el = isElement(node) ? node : node.parentElement;
+  if (!el) return false;
+  const className = el.className?.toString() ?? "";
+  if (COLOR_CLASS_PATTERN.test(className)) return true;
+  const color = getComputedStyle(el).color ?? "";
+  return isAccentColor(color);
+};
 
 const isBoldEl = (el: HTMLElement): boolean => {
   const weight = parseInt(getComputedStyle(el).fontWeight || "0", 10);
@@ -22,7 +53,8 @@ const isInlineCodeEl = (el: HTMLElement): boolean => {
 
 const extractInlinesFromNode = (node: Node): Inline[] => {
   if (node.nodeType === Node.TEXT_NODE) {
-    return textNodeToInline(node.textContent ?? "");
+    const accent = hasAccentColor(node);
+    return textNodeToInline(node.textContent ?? "", accent);
   }
 
   if (!isElement(node)) return [];
@@ -42,12 +74,14 @@ const extractInlinesFromNode = (node: Node): Inline[] => {
 
   if (isBoldEl(node)) {
     const text = node.textContent ?? "";
-    return text ? [{ type: "bold", content: text }] : [];
+    const accent = hasAccentColor(node);
+    return text ? [{ type: "bold", content: text, ...(accent ? { color: "accent" } : {}) }] : [];
   }
 
   if (isItalicEl(node)) {
     const text = node.textContent ?? "";
-    return text ? [{ type: "italic", content: text }] : [];
+    const accent = hasAccentColor(node);
+    return text ? [{ type: "italic", content: text, ...(accent ? { color: "accent" } : {}) }] : [];
   }
 
   const inlines: Inline[] = [];

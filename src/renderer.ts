@@ -89,15 +89,20 @@ const inlineToHtml = (
   const isBlack = options.themeId === "black";
   const isSspai = options.themeId === "sspai";
   const isAccentTheme = isPineapple || isBlue || isSspai;
+  const inlineAccent = inline.color === "accent";
   switch (inline.type) {
     case "text":
-      return escapeHtml(inline.content);
+      return inlineAccent
+        ? `<span style="color:${options.colors.link};">${escapeHtml(inline.content)}</span>`
+        : escapeHtml(inline.content);
     case "bold":
-      return `<strong style="font-weight:600;${isAccentTheme ? `word-break:break-all;color:${options.colors.link};` : ""}">${escapeHtml(
+      return `<strong style="font-weight:600;${isAccentTheme || inlineAccent ? `word-break:break-all;color:${options.colors.link};` : ""}">${escapeHtml(
         inline.content
       )}</strong>`;
     case "italic":
-      return `<em style="font-style:italic;">${escapeHtml(inline.content)}</em>`;
+      return `<em style="font-style:italic;${inlineAccent ? `color:${options.colors.link};` : ""}">${escapeHtml(
+        inline.content
+      )}</em>`;
     case "code":
       return `<code style="font-family:Menlo, Monaco, Consolas, monospace;background:${options.colors.inlineCodeBg};padding:2px 4px;border-radius:4px;font-size:0.95em;">${escapeHtml(inline.content)}</code>`;
     case "link":
