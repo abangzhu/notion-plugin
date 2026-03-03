@@ -31,7 +31,7 @@ const THEME_PRESETS: ThemePreset[] = [
   { id: "default", label: "默认主题", colors: {}, typography: { letterSpacing: "0.1em" } },
   {
     id: "red",
-    label: "菠萝红",
+    label: "活力橙",
     colors: {
       text: "#3f3f3f",
       subText: "#808a87",
@@ -49,7 +49,7 @@ const THEME_PRESETS: ThemePreset[] = [
   },
   {
     id: "blue",
-    label: "简约蓝",
+    label: "海蓝色",
     colors: {
       text: "#3f3f3f",
       subText: "#808a87",
@@ -71,7 +71,7 @@ const THEME_PRESETS: ThemePreset[] = [
   },
   {
     id: "sspai",
-    label: "少数派",
+    label: "魔力红",
     colors: {
       text: "#3f3f3f",
       subText: "#8c8c8c",
