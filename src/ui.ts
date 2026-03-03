@@ -578,12 +578,12 @@ export const initDrawer = () => {
         if (uploaded > 0) {
           setStatus(`已复制为公众号格式（已上传 ${uploaded} 张图片）`, "success");
         } else if (failed > 0) {
-          setStatus(
-            lastError
+          const errorMessage = lastError?.toLowerCase().includes("failed to fetch")
+            ? "已复制为公众号格式（ImgBB 无法访问，请更换国内图床或使用代理）"
+            : lastError
               ? `已复制为公众号格式（图片上传失败：${lastError}）`
-              : "已复制为公众号格式（部分图片上传失败）",
-            "error"
-          );
+              : "已复制为公众号格式（部分图片上传失败）";
+          setStatus(errorMessage, "error");
         } else {
           setStatus("已复制为公众号格式", "success");
         }
