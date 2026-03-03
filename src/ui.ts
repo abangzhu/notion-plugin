@@ -47,7 +47,17 @@ const THEME_PRESETS: ThemePreset[] = [
       letterSpacing: "0.1em"
     }
   },
-  { id: "blue", label: "简约蓝", colors: { link: "#2563eb", border: "#bfd2ff", divider: "#dbe5ff" } },
+  {
+    id: "blue",
+    label: "简约蓝",
+    colors: {
+      text: "#3f3f3f",
+      subText: "#808a87",
+      link: "#5296d4",
+      border: "#c3d7df",
+      divider: "#797979"
+    }
+  },
   { id: "black", label: "科技黑", colors: { link: "#111827", border: "#111827", divider: "#111827" } },
   { id: "sspai", label: "少数派", colors: { link: "#16a34a", border: "#86efac", divider: "#dcfce7" } }
 ];

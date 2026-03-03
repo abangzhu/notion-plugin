@@ -85,11 +85,13 @@ const inlineToHtml = (
   indexMap?: Map<string, number>
 ): string => {
   const isPineapple = options.themeId === "red";
+  const isBlue = options.themeId === "blue";
+  const isAccentTheme = isPineapple || isBlue;
   switch (inline.type) {
     case "text":
       return escapeHtml(inline.content);
     case "bold":
-      return `<strong style="font-weight:600;${isPineapple ? "word-break:break-all;" : ""}">${escapeHtml(
+      return `<strong style="font-weight:600;${isAccentTheme ? `word-break:break-all;color:${options.colors.link};` : ""}">${escapeHtml(
         inline.content
       )}</strong>`;
     case "italic":
@@ -100,7 +102,7 @@ const inlineToHtml = (
       const href = normalizeHref(inline.href);
       const index = indexMap?.get(href);
       const sup = index ? `<sup style="font-size:0.8em;">[${index}]</sup>` : "";
-      return `<a href="${escapeHtml(href)}" style="color:${options.colors.link};${isPineapple ? "text-decoration:none;border-bottom:1px solid " + options.colors.link + ";" : "text-decoration:underline;"}">${escapeHtml(
+      return `<a href="${escapeHtml(href)}" style="color:${options.colors.link};${isAccentTheme ? "text-decoration:none;border-bottom:1px solid " + options.colors.link + ";" : "text-decoration:underline;"}">${escapeHtml(
         inline.content
       )}${sup}</a>`;
     default:
@@ -144,7 +146,9 @@ const listToHtml = (
         ? "circle"
         : "square";
   const listItems = list.items.map((item) => listItemToHtml(item, options, depth, indexMap)).join("");
-  return `<${tag} style="font-family:${options.fontStack};font-size:${options.typography.bodySize};padding-left:1.5em;margin:10px 0;color:${options.colors.text};line-height:${options.typography.bodyLineHeight};list-style-type:${listStyleType};list-style-position:outside;${options.typography.letterSpacing ? `letter-spacing:${options.typography.letterSpacing};` : ""}">${listItems}</${tag}>`;
+  const isAccentTheme = options.themeId === "red" || options.themeId === "blue";
+  const listColor = !list.ordered && isAccentTheme ? options.colors.link : options.colors.text;
+  return `<${tag} style="font-family:${options.fontStack};font-size:${options.typography.bodySize};padding-left:1.5em;margin:10px 0;color:${listColor};line-height:${options.typography.bodyLineHeight};list-style-type:${listStyleType};list-style-position:outside;${options.typography.letterSpacing ? `letter-spacing:${options.typography.letterSpacing};` : ""}">${listItems}</${tag}>`;
 };
 
 const tableToHtml = (
@@ -183,25 +187,31 @@ const blockToHtml = (
   const h2Size = Math.round(baseSize * 1.33);
   const h3Size = Math.round(baseSize * 1.13);
   const isPineapple = options.themeId === "red";
+  const isBlue = options.themeId === "blue";
+  const isAccentTheme = isPineapple || isBlue;
   switch (block.type) {
     case "heading": {
       const tag = block.level === 1 ? "h1" : block.level === 2 ? "h2" : "h3";
-      if (isPineapple) {
+      if (isAccentTheme) {
+        const accentBorder = isBlue ? "#7bb7e0" : options.colors.link;
+        const headingMargin = Math.round(baseSize * 2.6);
+        const h3MarginTop = isBlue ? Math.round(baseSize * 3.33) : headingMargin;
+        const h3MarginBottom = isBlue ? Math.round(baseSize * 2.67) : headingMargin;
         if (block.level === 1) {
-          return `<${tag} style="line-height:${options.typography.bodyLineHeight};font-size:${h1Size}px;font-family:${options.fontStack};font-weight:700;margin:0 auto ${Math.round(baseSize * 2.6)}px;width:fit-content;color:${options.colors.link};text-align:center;padding:0 1em;border-bottom:2px solid ${options.colors.link};">${inlinesToHtml(
+          return `<${tag} style="line-height:1.5;font-size:${h1Size}px;font-family:${options.fontStack};font-weight:700;margin:0 auto ${headingMargin}px;width:fit-content;color:${options.colors.link};text-align:center;padding:0 1em;border-bottom:2px solid ${accentBorder};">${inlinesToHtml(
             block.children,
             options,
             indexMap
           )}</${tag}>`;
         }
         if (block.level === 2) {
-          return `<${tag} style="line-height:${options.typography.bodyLineHeight};font-family:${options.fontStack};font-size:${h2Size}px;font-weight:700;margin:${Math.round(baseSize * 2.6)}px auto;width:fit-content;background:${options.colors.link};color:#fff;text-align:center;padding:0 0.2em;">${inlinesToHtml(
+          return `<${tag} style="line-height:1.5;font-family:${options.fontStack};font-size:${h2Size}px;font-weight:700;margin:${headingMargin}px auto;width:fit-content;background:${options.colors.link};color:#fff;text-align:center;padding:0 0.2em;">${inlinesToHtml(
             block.children,
             options,
             indexMap
           )}</${tag}>`;
         }
-        return `<${tag} style="line-height:${options.typography.bodyLineHeight};font-family:${options.fontStack};font-size:${h3Size}px;font-weight:700;margin:${Math.round(baseSize * 2.6)}px 0;width:fit-content;color:#000;padding-left:8px;border-left:3px solid ${options.colors.link};">${inlinesToHtml(
+        return `<${tag} style="line-height:1.5;font-family:${options.fontStack};font-size:${h3Size}px;font-weight:700;margin:${h3MarginTop}px 0 ${h3MarginBottom}px;width:fit-content;color:#000;padding-left:8px;border-left:3px solid ${accentBorder};">${inlinesToHtml(
           block.children,
           options,
           indexMap
@@ -224,13 +234,15 @@ const blockToHtml = (
         indexMap
       )}</p>`;
     case "quote":
-      return `<blockquote style="font-family:${options.fontStack};border-left:${isPineapple ? "3px" : "4px"} solid ${options.colors.border};padding:${isPineapple ? "1px 10px 1px 20px" : "0 0 0 12px"};margin:${isPineapple ? "20px 0" : "16px 0"};color:${options.colors.subText};line-height:${options.typography.bodyLineHeight};">${inlinesToHtml(
+      return `<blockquote style="font-family:${options.fontStack};border-left:${isAccentTheme ? "3px" : "4px"} solid ${options.colors.border};padding:${isAccentTheme ? "1px 10px 1px 20px" : "0 0 0 12px"};margin:${isAccentTheme ? "20px 0" : "16px 0"};color:${options.colors.subText};line-height:${options.typography.bodyLineHeight};">${inlinesToHtml(
         block.children,
         options,
         indexMap
       )}</blockquote>`;
     case "divider":
-      return `<hr style="border:none;border-top:1px solid ${options.colors.divider};margin:16px 0;" />`;
+      return isAccentTheme
+        ? `<hr style="border-style:solid;border-width:1px 0 0;border-color:${options.colors.divider};transform-origin:0 0;transform:scale(1,0.5);" />`
+        : `<hr style="border:none;border-top:1px solid ${options.colors.divider};margin:16px 0;" />`;
     case "image":
       return `<p style="text-align:center;margin:16px 0;"><img src="${escapeHtml(block.src)}" alt="${escapeHtml(block.alt ?? "")}" style="max-width:100%;border-radius:6px;" /></p>`;
     case "code":
