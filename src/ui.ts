@@ -69,7 +69,20 @@ const THEME_PRESETS: ThemePreset[] = [
       divider: "#797979"
     }
   },
-  { id: "sspai", label: "少数派", colors: { link: "#16a34a", border: "#86efac", divider: "#dcfce7" } }
+  {
+    id: "sspai",
+    label: "少数派",
+    colors: {
+      text: "#3f3f3f",
+      subText: "#8c8c8c",
+      link: "#f22f27",
+      border: "#f22f27",
+      divider: "#f22f27"
+    },
+    typography: {
+      bodyLineHeight: "1.75"
+    }
+  }
 ];
 
 const FONT_PRESETS: FontPreset[] = [

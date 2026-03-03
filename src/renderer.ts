@@ -87,7 +87,8 @@ const inlineToHtml = (
   const isPineapple = options.themeId === "red";
   const isBlue = options.themeId === "blue";
   const isBlack = options.themeId === "black";
-  const isAccentTheme = isPineapple || isBlue;
+  const isSspai = options.themeId === "sspai";
+  const isAccentTheme = isPineapple || isBlue || isSspai;
   switch (inline.type) {
     case "text":
       return escapeHtml(inline.content);
@@ -121,11 +122,16 @@ const listItemToHtml = (
   item: ListItem,
   options: RenderOptions,
   depth: number,
-  indexMap?: Map<string, number>
+  indexMap?: Map<string, number>,
+  textColor?: string
 ): string => {
   const nestedHtml =
     item.nested?.map((nested) => listToHtml(nested, options, depth + 1, indexMap)).join("") ?? "";
-  return `<li style="margin:6px 0;">${inlinesToHtml(item.children, options, indexMap)}${nestedHtml}</li>`;
+  return `<li style="margin:6px 0;${textColor ? `color:${textColor};` : ""}">${inlinesToHtml(
+    item.children,
+    options,
+    indexMap
+  )}${nestedHtml}</li>`;
 };
 
 const listToHtml = (
@@ -146,9 +152,12 @@ const listToHtml = (
       : depth === 1
         ? "circle"
         : "square";
-  const listItems = list.items.map((item) => listItemToHtml(item, options, depth, indexMap)).join("");
-  const isAccentTheme = options.themeId === "red" || options.themeId === "blue";
+  const isAccentTheme = options.themeId === "red" || options.themeId === "blue" || options.themeId === "sspai";
   const listColor = !list.ordered && isAccentTheme ? options.colors.link : options.colors.text;
+  const itemTextColor = !list.ordered && isAccentTheme ? options.colors.text : undefined;
+  const listItems = list.items
+    .map((item) => listItemToHtml(item, options, depth, indexMap, itemTextColor))
+    .join("");
   return `<${tag} style="font-family:${options.fontStack};font-size:${options.typography.bodySize};padding-left:1.5em;margin:10px 0;color:${listColor};line-height:${options.typography.bodyLineHeight};list-style-type:${listStyleType};list-style-position:outside;${options.typography.letterSpacing ? `letter-spacing:${options.typography.letterSpacing};` : ""}">${listItems}</${tag}>`;
 };
 
@@ -190,10 +199,32 @@ const blockToHtml = (
   const isPineapple = options.themeId === "red";
   const isBlue = options.themeId === "blue";
   const isBlack = options.themeId === "black";
+  const isSspai = options.themeId === "sspai";
   const isAccentTheme = isPineapple || isBlue;
   switch (block.type) {
     case "heading": {
       const tag = block.level === 1 ? "h1" : block.level === 2 ? "h2" : "h3";
+      if (isSspai) {
+        if (block.level === 1) {
+          return `<${tag} style="line-height:1.5;font-size:${h1Size}px;font-family:${options.fontStack};font-weight:700;margin:0 auto ${Math.round(baseSize * 2.6)}px 0;width:fit-content;border-left:6px solid ${options.colors.link};padding-left:6px;color:${options.colors.text};">${inlinesToHtml(
+            block.children,
+            options,
+            indexMap
+          )}</${tag}>`;
+        }
+        if (block.level === 2) {
+          return `<${tag} style="line-height:1.5;font-family:${options.fontStack};font-size:${h2Size}px;font-weight:700;margin:${Math.round(baseSize * 2.6)}px auto;width:fit-content;color:${options.colors.text};">${inlinesToHtml(
+            block.children,
+            options,
+            indexMap
+          )}</${tag}>`;
+        }
+        return `<${tag} style="line-height:1.5;font-family:${options.fontStack};font-size:${h3Size}px;font-weight:700;margin:${Math.round(baseSize * 2.6)}px 0;width:fit-content;color:${options.colors.text};">${inlinesToHtml(
+          block.children,
+          options,
+          indexMap
+        )}</${tag}>`;
+      }
       if (isBlack) {
         if (block.level === 1) {
           return `<${tag} style="line-height:1.5;font-size:${h1Size}px;font-family:${options.fontStack};font-weight:700;margin:0 auto ${Math.round(baseSize * 2.6)}px;width:fit-content;color:${options.colors.link};text-align:center;padding:0 1em;border-bottom:8px solid ${options.colors.link};">${inlinesToHtml(
@@ -264,14 +295,21 @@ const blockToHtml = (
           indexMap
         )}</blockquote>`;
       }
+      if (isSspai) {
+        return `<blockquote style="font-family:${options.fontStack};border-left:2px solid ${options.colors.link};padding:24px 16px 12px;margin:24px 0 36px;background:url('https://new-notion-1315843248.cos.ap-guangzhou.myqcloud.com/theme/pie/pie_blockquote.svg') 12px 0 / 12px no-repeat;color:${options.colors.subText};line-height:${options.typography.bodyLineHeight};">${inlinesToHtml(
+          block.children,
+          options,
+          indexMap
+        )}</blockquote>`;
+      }
       return `<blockquote style="font-family:${options.fontStack};border-left:${isAccentTheme ? "3px" : "4px"} solid ${options.colors.border};padding:${isAccentTheme ? "1px 10px 1px 20px" : "0 0 0 12px"};margin:${isAccentTheme ? "20px 0" : "16px 0"};color:${options.colors.subText};line-height:${options.typography.bodyLineHeight};">${inlinesToHtml(
         block.children,
         options,
         indexMap
       )}</blockquote>`;
     case "divider":
-      return isAccentTheme || isBlack
-        ? `<hr style="border-style:solid;border-width:1px 0 0;border-color:${options.colors.divider};transform-origin:0 0;transform:scale(1,0.5);" />`
+      return isAccentTheme || isBlack || isSspai
+        ? `<hr style="border-style:solid;border-width:1px 0 0;border-color:${options.colors.divider};transform-origin:0 0;transform:scale(1,${isSspai ? "1" : "0.5"});margin:${isSspai ? "15px 0" : "16px 0"};" />`
         : `<hr style="border:none;border-top:1px solid ${options.colors.divider};margin:16px 0;" />`;
     case "image":
       return `<p style="text-align:center;margin:16px 0;"><img src="${escapeHtml(block.src)}" alt="${escapeHtml(block.alt ?? "")}" style="max-width:100%;border-radius:6px;" /></p>`;
