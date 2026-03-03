@@ -31,14 +31,7 @@ const arrayBufferToBase64 = (buffer: ArrayBuffer): string => {
   return btoa(binary);
 };
 
-const uploadToImgBB = async (imageUrl: string, apiKey: string): Promise<string> => {
-  const response = await fetch(imageUrl);
-  if (!response.ok) {
-    throw new Error(`Failed to fetch image: ${response.status}`);
-  }
-  const buffer = await response.arrayBuffer();
-  const base64 = arrayBufferToBase64(buffer);
-
+const uploadToImgBB = async (base64: string, apiKey: string): Promise<string> => {
   const formData = new FormData();
   formData.append("image", base64);
 
@@ -64,10 +57,26 @@ const uploadToImgBB = async (imageUrl: string, apiKey: string): Promise<string> 
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type !== "uploadImage") return;
-  const { src, apiKey } = message as { src: string; apiKey: string };
+  const { src, apiKey, base64 } = message as {
+    src?: string;
+    apiKey: string;
+    base64?: string;
+  };
   (async () => {
     try {
-      const uploadedUrl = await uploadToImgBB(src, apiKey);
+      let payloadBase64 = base64;
+      if (!payloadBase64 && src) {
+        const response = await fetch(src);
+        if (!response.ok) {
+          throw new Error(`Failed to fetch image: ${response.status}`);
+        }
+        const buffer = await response.arrayBuffer();
+        payloadBase64 = arrayBufferToBase64(buffer);
+      }
+      if (!payloadBase64) {
+        throw new Error("Missing image payload");
+      }
+      const uploadedUrl = await uploadToImgBB(payloadBase64, apiKey);
       sendResponse({ success: true, url: uploadedUrl });
     } catch (error) {
       sendResponse({ success: false, error: (error as Error).message ?? "upload_failed" });

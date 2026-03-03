@@ -339,20 +339,28 @@ export const initDrawer = () => {
     return input.trim();
   };
 
-  const uploadImage = (src: string, apiKey: string): Promise<string | null> =>
+  const blobToBase64 = (blob: Blob): Promise<string | null> =>
     new Promise((resolve) => {
-      chrome.runtime.sendMessage({ type: "uploadImage", src, apiKey }, (response) => {
-        if (chrome.runtime.lastError) {
-          resolve(null);
-          return;
-        }
-        if (response?.success && response?.url) {
-          resolve(response.url as string);
-          return;
-        }
-        resolve(null);
-      });
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        const result = typeof reader.result === "string" ? reader.result : "";
+        const base64 = result.includes(",") ? result.split(",")[1] : "";
+        resolve(base64 || null);
+      };
+      reader.onerror = () => resolve(null);
+      reader.readAsDataURL(blob);
     });
+
+  const fetchImageBase64 = async (src: string): Promise<string | null> => {
+    try {
+      const response = await fetch(src, { credentials: "include" });
+      if (!response.ok) return null;
+      const blob = await response.blob();
+      return await blobToBase64(blob);
+    } catch (error) {
+      return null;
+    }
+  };
 
   const replaceImagesWithImgBB = async (html: string, apiKey: string) => {
     const wrapper = document.createElement("div");
@@ -365,7 +373,23 @@ export const initDrawer = () => {
       const src = image.getAttribute("src") ?? "";
       if (!src || src.startsWith("data:")) continue;
       if (src.includes("i.ibb.co") || src.includes("ibb.co")) continue;
-      const uploadedUrl = await uploadImage(src, apiKey);
+      const base64 = await fetchImageBase64(src);
+      const uploadedUrl = await new Promise<string | null>((resolve) => {
+        chrome.runtime.sendMessage(
+          { type: "uploadImage", src, apiKey, base64 },
+          (response) => {
+            if (chrome.runtime.lastError) {
+              resolve(null);
+              return;
+            }
+            if (response?.success && response?.url) {
+              resolve(response.url as string);
+              return;
+            }
+            resolve(null);
+          }
+        );
+      });
       if (uploadedUrl) {
         image.setAttribute("src", uploadedUrl);
         uploaded += 1;
