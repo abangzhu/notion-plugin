@@ -259,9 +259,13 @@ const blockToHtml = (
           )}</${tag}>`;
         }
         if (block.level === 2) {
+          const headingOptions: RenderOptions = {
+            ...options,
+            colors: { ...options.colors, link: "#ffffff" }
+          };
           return `<${tag} style="line-height:1.5;font-family:${options.fontStack};font-size:${h2Size}px;font-weight:700;margin:${headingMargin}px auto;width:fit-content;background:${options.colors.link};color:#fff;text-align:center;padding:0 0.2em;">${inlinesToHtml(
             block.children,
-            options,
+            headingOptions,
             indexMap
           )}</${tag}>`;
         }
