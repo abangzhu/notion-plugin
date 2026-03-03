@@ -1,6 +1,6 @@
 import { extractDocFromNotion } from "./extractor";
 import { renderDocToHtml, renderDocToText } from "./renderer";
-import { getSelectionHtmlWithin, writeClipboard } from "./clipboard";
+import { writeClipboard } from "./clipboard";
 import {
   DEFAULT_COLORS,
   DEFAULT_TYPO,
@@ -98,6 +98,10 @@ const ensureDrawerStyles = () => {
 @keyframes sliceIn {
   from { transform: translateX(24px); opacity: 0; }
   to { transform: translateX(0); opacity: 1; }
+}
+@keyframes sliceOut {
+  from { transform: translateX(0); opacity: 1; }
+  to { transform: translateX(24px); opacity: 0; }
 }
 `;
   document.head.appendChild(style);
@@ -201,7 +205,7 @@ const createDrawer = () => {
   const status = document.createElement("div");
   status.style.fontSize = "12px";
   status.style.color = "#6b7280";
-  status.textContent = "选中预览文字可复制部分内容";
+  status.textContent = "";
 
   const actions = document.createElement("div");
   actions.style.display = "flex";
@@ -209,14 +213,10 @@ const createDrawer = () => {
   actions.style.gap = "8px";
 
   const refreshButton = createButton("刷新", "ghost");
-  const copySelectionButton = createButton("复制选中", "ghost");
   const copyAllButton = createButton("复制全文", "primary");
-  const closeButton = createButton("关闭", "ghost");
 
   actions.appendChild(refreshButton);
-  actions.appendChild(copySelectionButton);
   actions.appendChild(copyAllButton);
-  actions.appendChild(closeButton);
 
   rowBottom.appendChild(status);
   rowBottom.appendChild(actions);
@@ -253,9 +253,7 @@ const createDrawer = () => {
     sizeDown,
     sizeUp,
     refreshButton,
-    copySelectionButton,
-    copyAllButton,
-    closeButton
+    copyAllButton
   };
 };
 
@@ -266,6 +264,7 @@ export const initDrawer = () => {
   let lastHtml = "";
   let lastText = "";
   let outsideListenerAttached = false;
+  let closing = false;
 
   let currentTheme = THEME_PRESETS[0];
   let currentFont = FONT_PRESETS[0];
@@ -327,7 +326,20 @@ export const initDrawer = () => {
       previewPage.innerHTML =
         lastHtml || "<p style=\"color:#9ca3af;font-size:13px;\">未检测到可用内容</p>";
     }
-    setStatus("已渲染 iOS 微信预览", "success");
+    setStatus("");
+  };
+
+  const closeDrawer = () => {
+    if (!drawer || closing) return;
+    closing = true;
+    drawer.style.animation = "0.25s ease-in-out 0s 1 normal forwards running sliceOut";
+    setTimeout(() => {
+      drawer?.remove();
+      drawer = null;
+      previewPage = null;
+      status = null;
+      closing = false;
+    }, 250);
   };
 
   const ensureDrawer = () => {
@@ -391,8 +403,12 @@ export const initDrawer = () => {
     if (!outsideListenerAttached) {
       outsideListenerAttached = true;
       document.addEventListener("click", (event) => {
-        if (!created.themeWrapper.contains(event.target as Node)) {
+        const target = event.target as Node;
+        if (!created.themeWrapper.contains(target)) {
           created.themeMenu.style.display = "none";
+        }
+        if (drawer && !drawer.contains(target)) {
+          closeDrawer();
         }
       });
     }
@@ -428,40 +444,12 @@ export const initDrawer = () => {
       }
     });
 
-    created.copySelectionButton.addEventListener("click", async () => {
-      if (!previewPage) return;
-      const selection = getSelectionHtmlWithin(previewPage);
-      if (!selection) {
-        setStatus("未检测到预览选中内容", "error");
-        return;
-      }
-      try {
-        await writeClipboard(selection.html, selection.text);
-        setStatus("已复制选中内容", "success");
-      } catch (error) {
-        setStatus("复制失败，请重试", "error");
-      }
-    });
-
-    created.closeButton.addEventListener("click", () => {
-      drawer?.remove();
-      drawer = null;
-      previewPage = null;
-      status = null;
-    });
-
     document.body.appendChild(drawer);
     render();
   };
 
   const toggleDrawer = () => {
-    if (drawer) {
-      drawer.remove();
-      drawer = null;
-      previewPage = null;
-      status = null;
-      return;
-    }
+    if (drawer) return closeDrawer();
     ensureDrawer();
   };
 
