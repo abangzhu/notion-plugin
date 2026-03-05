@@ -398,6 +398,64 @@ const listToText = (list: ListBlock, indexMap: Map<string, number>, depth = 0): 
     .join("\n");
 };
 
+const escapeMarkdownText = (text: string): string =>
+  text
+    .replace(/\\/g, "\\\\")
+    .replace(/`/g, "\\`")
+    .replace(/\[/g, "\\[")
+    .replace(/\]/g, "\\]")
+    .replace(/\(/g, "\\(")
+    .replace(/\)/g, "\\)");
+
+const inlineToMarkdown = (inline: Inline): string => {
+  switch (inline.type) {
+    case "text":
+      return escapeMarkdownText(inline.content);
+    case "bold":
+      return `**${escapeMarkdownText(inline.content)}**`;
+    case "italic":
+      return `*${escapeMarkdownText(inline.content)}*`;
+    case "code":
+      return `\`${inline.content.replace(/`/g, "\\`")}\``;
+    case "link":
+      return `[${escapeMarkdownText(inline.content)}](${normalizeHref(inline.href)})`;
+    default:
+      return "";
+  }
+};
+
+const inlinesToMarkdown = (inlines: Inline[]): string => inlines.map((inline) => inlineToMarkdown(inline)).join("");
+
+const listToMarkdown = (list: ListBlock, depth = 0): string => {
+  const indent = "  ".repeat(depth);
+  return list.items
+    .map((item, idx) => {
+      const prefix = list.ordered ? `${idx + 1}. ` : "- ";
+      const itemText = inlinesToMarkdown(item.children).trim();
+      const line = `${indent}${prefix}${itemText}`.trimEnd();
+      const nested = item.nested?.map((nestedList) => listToMarkdown(nestedList, depth + 1)).join("\n") ?? "";
+      return nested ? `${line}\n${nested}` : line;
+    })
+    .join("\n");
+};
+
+const tableToMarkdown = (table: TableBlock): string => {
+  if (table.rows.length === 0) return "";
+  const columnCount = table.rows.reduce((max, row) => Math.max(max, row.cells.length), 0);
+  if (columnCount === 0) return "";
+
+  const normalizeRow = (cells: TableBlock["rows"][number]["cells"]): string[] =>
+    Array.from({ length: columnCount }, (_, idx) =>
+      inlinesToMarkdown(cells[idx]?.children ?? []).replace(/\n/g, " ")
+    );
+
+  const header = normalizeRow(table.rows[0].cells);
+  const divider = Array.from({ length: columnCount }, () => "---");
+  const body = table.rows.slice(1).map((row) => normalizeRow(row.cells));
+  const rows = [header, divider, ...body];
+  return rows.map((cols) => `| ${cols.join(" | ")} |`).join("\n");
+};
+
 export const renderDocToText = (doc: Doc): string => {
   const { items, indexMap } = collectReferences(doc);
   const bodyText = doc.blocks
@@ -435,4 +493,46 @@ export const renderDocToText = (doc: Doc): string => {
   if (items.length === 0) return bodyText;
   const referencesText = items.map((item, idx) => `[${idx + 1}] ${item.href}`).join("\n");
   return `${bodyText}\n\n参考资料\n${referencesText}`;
+};
+
+export const renderDocToMarkdown = (doc: Doc): string => {
+  const body = doc.blocks
+    .map((block) => {
+      switch (block.type) {
+        case "heading":
+          return `${"#".repeat(block.level)} ${inlinesToMarkdown(block.children).trim()}`.trim();
+        case "paragraph":
+          return inlinesToMarkdown(block.children).trim();
+        case "quote": {
+          const quote = inlinesToMarkdown(block.children).trim();
+          return quote
+            .split("\n")
+            .map((line) => `> ${line}`)
+            .join("\n");
+        }
+        case "callout": {
+          const icon = block.icon?.trim() || "💡";
+          const content = inlinesToMarkdown(block.children).trim();
+          return `> ${icon} ${content}`.trim();
+        }
+        case "divider":
+          return "---";
+        case "image":
+          return `![${escapeMarkdownText(block.alt ?? "image")}](${block.src})`;
+        case "code": {
+          const fence = block.code.includes("```") ? "````" : "```";
+          return `${fence}\n${block.code}\n${fence}`;
+        }
+        case "list":
+          return listToMarkdown(block);
+        case "table":
+          return tableToMarkdown(block);
+        default:
+          return "";
+      }
+    })
+    .filter((section) => section.length > 0)
+    .join("\n\n");
+
+  return body.trim();
 };

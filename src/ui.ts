@@ -1,5 +1,5 @@
 import { extractDocFromNotion } from "./extractor";
-import { renderDocToHtml, renderDocToText } from "./renderer";
+import { renderDocToHtml, renderDocToMarkdown, renderDocToText } from "./renderer";
 import { writeClipboard } from "./clipboard";
 import {
   DEFAULT_COLORS,
@@ -270,8 +270,10 @@ const createDrawer = () => {
 
   const refreshButton = createButton("刷新", "ghost");
   const copyAllButton = createButton("复制为公众号格式", "primary");
+  const copyMarkdownButton = createButton("复制为 Markdown", "ghost");
   footer.appendChild(refreshButton);
   footer.appendChild(copyAllButton);
+  footer.appendChild(copyMarkdownButton);
 
   container.appendChild(toolbar);
   container.appendChild(previewScroll);
@@ -288,7 +290,8 @@ const createDrawer = () => {
     sizeDown,
     sizeUp,
     refreshButton,
-    copyAllButton
+    copyAllButton,
+    copyMarkdownButton
   };
 };
 
@@ -298,6 +301,7 @@ export const initDrawer = () => {
   let status: HTMLElement | null = null;
   let lastHtml = "";
   let lastText = "";
+  let lastMarkdown = "";
   let outsideListenerAttached = false;
   let closing = false;
 
@@ -357,6 +361,7 @@ export const initDrawer = () => {
     const doc = extractDocFromNotion();
     lastHtml = renderDocToHtml(doc, buildRenderOptions());
     lastText = renderDocToText(doc);
+    lastMarkdown = renderDocToMarkdown(doc);
     if (previewPage) {
       previewPage.innerHTML =
         lastHtml || "<p style=\"color:#9ca3af;font-size:13px;\">未检测到可用内容</p>";
@@ -474,6 +479,15 @@ export const initDrawer = () => {
       try {
         await writeClipboard(lastHtml, lastText);
         setStatus("已复制为公众号格式", "success");
+      } catch (error) {
+        setStatus("复制失败，请重试", "error");
+      }
+    });
+
+    created.copyMarkdownButton.addEventListener("click", async () => {
+      try {
+        await navigator.clipboard.writeText(lastMarkdown);
+        setStatus("已复制为 Markdown", "success");
       } catch (error) {
         setStatus("复制失败，请重试", "error");
       }
