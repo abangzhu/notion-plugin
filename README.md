@@ -1,50 +1,67 @@
 # Notion2WeChat
 
-A Chrome extension that converts Notion pages into WeChat-ready HTML optimized for iOS reading. It renders a live preview in a right-side drawer and copies both `text/html` and `text/plain` to the clipboard for clean pasting in the WeChat editor.
+将 Notion 页面内容一键转换为可发布内容的 Chrome 扩展，支持公众号 HTML 与 Markdown 两种复制格式。
 
-## Features
+## 功能列表
 
-- One-click conversion from Notion DOM to WeChat-compatible HTML
-- iOS-optimized typography (line-height, spacing, font stack)
-- Themes: Default, 菠萝红, 简约蓝, 科技黑, 少数派
-- Reference list generation for hyperlinks (inline `[n]` + reference section)
-- Works directly on Notion pages without login or API access
+- 一键复制为公众号格式
+- 一键复制为 Markdown 格式
+- 支持 5 套主题：`默认主题`、`活力橙`、`海蓝色`、`科技黑`、`魔力红`
+- 支持字体切换与字号缩放
+- 支持链接引用自动编号（文内 `[n]` + 文末参考资料）
+- 右侧抽屉实时预览
+  - 点击 `复制为公众号格式`：预览公众号 HTML 效果
+  - 点击 `复制为 Markdown`：预览 Markdown 文本效果
 
-## Setup
+## 已支持内容格式
 
-1. Install dependencies
+- List（有序/无序）
+- Heading（H1/H2/H3）
+- Image
+- Code
+- Quote
+- Callout
+- Divider
+- Table
+- Paragraph / Link / Bold / Italic / Inline Code
+
+## 安装与使用
+
+1. 安装依赖
 
 ```bash
 npm install
 ```
 
-2. Build the extension
+2. 构建扩展
 
 ```bash
 npm run build
 ```
 
-3. Load in Chrome
-- Open `chrome://extensions`
-- Enable "Developer mode"
-- Click "Load unpacked"
-- Select this folder
+3. 在 Chrome 加载扩展
+- 打开 `chrome://extensions`
+- 打开 `Developer mode`
+- 点击 `Load unpacked`
+- 选择本项目目录
 
-## Usage
+4. 使用
+- 打开 `https://www.notion.so/*` 页面
+- 点击扩展图标打开右侧抽屉
+- 选择主题 / 字体 / 字号
+- 按需点击：
+  - `复制为公众号格式`
+  - `复制为 Markdown`
 
-1. Open a Notion page at `https://www.notion.so/*`
-2. Click the extension icon to open the drawer
-3. Choose a theme and font, adjust size if needed
-4. Click `复制为公众号格式` to copy the content
-5. Paste into the WeChat editor
-
-## Development
+## 开发命令
 
 ```bash
 npm run dev
+npm run typecheck
+npm run build
 ```
 
-## Notes
+## 说明
 
-- Notion DOM structure can change; some blocks may require future tuning.
-- Only `https://www.notion.so/*` is currently supported.
+- 目前仅支持 Notion 网页端（`https://www.notion.so/*`）。
+- Notion DOM 结构变更时，个别 block 提取规则可能需要更新。
