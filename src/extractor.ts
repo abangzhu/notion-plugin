@@ -99,6 +99,34 @@ const extractInlinesFromNodes = (nodes: Node[]): Inline[] => {
   return inlines;
 };
 
+const CALLOUT_SELECTOR = '[class*="notion-callout"], [data-block-type="callout"]';
+
+const normalizeInlineContent = (inlines: Inline[]): Inline[] => {
+  const hasVisibleText = inlines.some((inline) => inline.content.trim().length > 0);
+  return hasVisibleText ? inlines : [];
+};
+
+const extractCalloutBlock = (blockEl: HTMLElement): Block | null => {
+  const calloutEl = blockEl.matches(CALLOUT_SELECTOR)
+    ? blockEl
+    : blockEl.querySelector<HTMLElement>(CALLOUT_SELECTOR);
+  if (!calloutEl) return null;
+
+  const iconEl = calloutEl.querySelector<HTMLElement>('[class*="notion-page-icon"], [role="img"]');
+  const icon = iconEl?.textContent?.trim() || undefined;
+  const textEl =
+    calloutEl.querySelector<HTMLElement>('[class*="notion-callout-text"]') ??
+    calloutEl.querySelector<HTMLElement>('[class*="notion-semantic-string"]') ??
+    calloutEl;
+  const children = normalizeInlineContent(extractInlinesFromNode(textEl));
+  if (!children.length && !icon) return null;
+  return {
+    type: "callout",
+    icon,
+    children
+  };
+};
+
 const getBlockElements = (root: Element): HTMLElement[] => {
   const allBlocks = Array.from(root.querySelectorAll<HTMLElement>("[data-block-id]"));
   return allBlocks.filter((block) => {
@@ -159,6 +187,9 @@ const extractBlock = (blockEl: HTMLElement): Block | null => {
       children: extractInlinesFromNode(heading)
     };
   }
+
+  const calloutBlock = extractCalloutBlock(blockEl);
+  if (calloutBlock) return calloutBlock;
 
   const codeEl = blockEl.querySelector("pre");
   if (codeEl) {

@@ -63,6 +63,7 @@ const collectReferences = (doc: Doc): { items: ReferenceItem[]; indexMap: Map<st
       case "heading":
       case "paragraph":
       case "quote":
+      case "callout":
         collectReferencesFromInlines(block.children, items, indexMap);
         break;
       case "list":
@@ -84,19 +85,17 @@ const inlineToHtml = (
   options: RenderOptions,
   indexMap?: Map<string, number>
 ): string => {
-  const isPineapple = options.themeId === "red";
-  const isBlue = options.themeId === "blue";
-  const isBlack = options.themeId === "black";
-  const isSspai = options.themeId === "sspai";
-  const isAccentTheme = isPineapple || isBlue || isSspai;
-  const inlineAccent = inline.color === "accent";
+  const isAccentTheme =
+    options.themeId === "red" || options.themeId === "blue" || options.themeId === "sspai";
+  const inlineAccent = "color" in inline && inline.color === "accent";
+
   switch (inline.type) {
     case "text":
       return inlineAccent
         ? `<span style="color:${options.colors.link};">${escapeHtml(inline.content)}</span>`
         : escapeHtml(inline.content);
     case "bold":
-      return `<strong style="font-weight:600;${isAccentTheme || inlineAccent ? `word-break:break-all;color:${options.colors.link};` : ""}">${escapeHtml(
+      return `<strong style="font-weight:600;${inlineAccent ? `color:${options.colors.link};` : ""}">${escapeHtml(
         inline.content
       )}</strong>`;
     case "italic":
@@ -105,13 +104,14 @@ const inlineToHtml = (
       )}</em>`;
     case "code":
       return `<code style="font-family:Menlo, Monaco, Consolas, monospace;background:${options.colors.inlineCodeBg};padding:2px 4px;border-radius:4px;font-size:0.95em;">${escapeHtml(inline.content)}</code>`;
-    case "link":
+    case "link": {
       const href = normalizeHref(inline.href);
       const index = indexMap?.get(href);
       const sup = index ? `<sup style="font-size:0.8em;">[${index}]</sup>` : "";
-      return `<a href="${escapeHtml(href)}" style="color:${options.colors.link};${isAccentTheme || isBlack ? "text-decoration:none;border-bottom:1px solid " + options.colors.link + ";" : "text-decoration:underline;"}">${escapeHtml(
+      return `<a href="${escapeHtml(href)}" style="color:${options.colors.link};${isAccentTheme ? `text-decoration:none;border-bottom:1px solid ${options.colors.link};` : "text-decoration:underline;"}">${escapeHtml(
         inline.content
       )}${sup}</a>`;
+    }
     default:
       return "";
   }
@@ -123,6 +123,39 @@ const inlinesToHtml = (
   indexMap?: Map<string, number>
 ): string => inlines.map((inline) => inlineToHtml(inline, options, indexMap)).join("");
 
+const paragraphStyle = (
+  options: RenderOptions,
+  textColor?: string,
+  extra = ""
+): string =>
+  [
+    `font-family:${options.fontStack}`,
+    `font-size:${options.typography.bodySize}`,
+    `line-height:${options.typography.bodyLineHeight}`,
+    `font-weight:${options.typography.bodyWeight}`,
+    `color:${textColor ?? options.colors.text}`,
+    options.typography.letterSpacing ? `letter-spacing:${options.typography.letterSpacing}` : "",
+    "text-align:left",
+    "white-space:pre-wrap",
+    "word-break:break-word",
+    extra
+  ]
+    .filter(Boolean)
+    .join(";");
+
+const wrapSection = (innerHtml: string, margin = "10px 0"): string =>
+  `<section style="margin:${margin};">${innerHtml}</section>`;
+
+const paragraphToHtml = (
+  inlines: Inline[],
+  options: RenderOptions,
+  indexMap?: Map<string, number>,
+  textColor?: string
+): string => {
+  const content = inlinesToHtml(inlines, options, indexMap) || "<br/>";
+  return wrapSection(`<p style="${paragraphStyle(options, textColor)}">${content}</p>`);
+};
+
 const listItemToHtml = (
   item: ListItem,
   options: RenderOptions,
@@ -130,13 +163,10 @@ const listItemToHtml = (
   indexMap?: Map<string, number>,
   textColor?: string
 ): string => {
+  const itemText = inlinesToHtml(item.children, options, indexMap) || "<br/>";
   const nestedHtml =
     item.nested?.map((nested) => listToHtml(nested, options, depth + 1, indexMap)).join("") ?? "";
-  return `<li style="margin:6px 0;${textColor ? `color:${textColor};` : ""}">${inlinesToHtml(
-    item.children,
-    options,
-    indexMap
-  )}${nestedHtml}</li>`;
+  return `<li style="margin:6px 0;${textColor ? `color:${textColor};` : ""}"><p style="${paragraphStyle(options, textColor, "margin:0")}">${itemText}</p>${nestedHtml}</li>`;
 };
 
 const listToHtml = (
@@ -157,13 +187,15 @@ const listToHtml = (
       : depth === 1
         ? "circle"
         : "square";
-  const isAccentTheme = options.themeId === "red" || options.themeId === "blue" || options.themeId === "sspai";
+  const isAccentTheme =
+    options.themeId === "red" || options.themeId === "blue" || options.themeId === "sspai";
   const listColor = !list.ordered && isAccentTheme ? options.colors.link : options.colors.text;
   const itemTextColor = !list.ordered && isAccentTheme ? options.colors.text : undefined;
   const listItems = list.items
     .map((item) => listItemToHtml(item, options, depth, indexMap, itemTextColor))
     .join("");
-  return `<${tag} style="font-family:${options.fontStack};font-size:${options.typography.bodySize};padding-left:1.5em;margin:10px 0;color:${listColor};line-height:${options.typography.bodyLineHeight};list-style-type:${listStyleType};list-style-position:outside;${options.typography.letterSpacing ? `letter-spacing:${options.typography.letterSpacing};` : ""}">${listItems}</${tag}>`;
+  const listHtml = `<${tag} style="font-family:${options.fontStack};font-size:${options.typography.bodySize};padding-left:1.5em;margin:0;color:${listColor};line-height:${options.typography.bodyLineHeight};list-style-type:${listStyleType};list-style-position:outside;${options.typography.letterSpacing ? `letter-spacing:${options.typography.letterSpacing};` : ""}">${listItems}</${tag}>`;
+  return wrapSection(listHtml, depth === 0 ? "10px 0" : "6px 0 0 0");
 };
 
 const tableToHtml = (
@@ -189,145 +221,93 @@ const tableToHtml = (
     })
     .join("");
 
-  return `<table style="font-size:${options.typography.bodySize};margin:10px 0;line-height:${options.typography.bodyLineHeight};border-collapse:collapse;width:100%;border:1px solid ${options.colors.divider};">${tbody}</table>`;
+  const tableHtml = `<table style="font-size:${options.typography.bodySize};margin:0;line-height:${options.typography.bodyLineHeight};border-collapse:collapse;width:100%;border:1px solid ${options.colors.divider};">${tbody}</table>`;
+  return wrapSection(tableHtml, "10px 0");
 };
+
+const headingToHtml = (
+  level: 1 | 2 | 3,
+  inlines: Inline[],
+  options: RenderOptions,
+  indexMap?: Map<string, number>
+): string => {
+  const baseSize = Number.parseFloat(options.typography.bodySize) || 16;
+  const fontSize = level === 1 ? Math.round(baseSize * 1.55) : level === 2 ? Math.round(baseSize * 1.3) : Math.round(baseSize * 1.15);
+  const marginTop = level === 1 ? Math.round(baseSize * 1.9) : Math.round(baseSize * 1.4);
+  const marginBottom = level === 1 ? Math.round(baseSize * 1.0) : Math.round(baseSize * 0.75);
+  const content = inlinesToHtml(inlines, options, indexMap) || "<br/>";
+  return wrapSection(
+    `<p style="font-family:${options.fontStack};font-size:${fontSize}px;line-height:1.5;font-weight:${options.typography.headingWeight};margin:0;color:${options.colors.text};${options.typography.letterSpacing ? `letter-spacing:${options.typography.letterSpacing};` : ""}"><strong>${content}</strong></p>`,
+    `${marginTop}px 0 ${marginBottom}px 0`
+  );
+};
+
+const quoteToHtml = (
+  inlines: Inline[],
+  options: RenderOptions,
+  indexMap?: Map<string, number>
+): string => {
+  const content = inlinesToHtml(inlines, options, indexMap) || "<br/>";
+  return wrapSection(
+    `<p style="${paragraphStyle(options, options.colors.subText, `border-left:3px solid ${options.colors.border};padding-left:12px;margin:0`)}">❝ ${content}</p>`,
+    "12px 0"
+  );
+};
+
+const calloutToHtml = (
+  icon: string | undefined,
+  inlines: Inline[],
+  options: RenderOptions,
+  indexMap?: Map<string, number>
+): string => {
+  const content = inlinesToHtml(inlines, options, indexMap) || "<br/>";
+  const calloutIcon = escapeHtml((icon || "💡").trim() || "💡");
+  return wrapSection(
+    `<p style="${paragraphStyle(options, options.colors.text, `background:${options.colors.codeBg};border-radius:6px;padding:8px 12px;margin:0`)}">${calloutIcon} ${content}</p>`,
+    "12px 0"
+  );
+};
+
+const codeToHtml = (code: string, options: RenderOptions): string => {
+  const escaped = escapeHtml(code).replace(/\n/g, "<br/>") || "<br/>";
+  return wrapSection(
+    `<p style="font-family:Menlo, Monaco, Consolas, monospace;font-size:13px;line-height:1.6;background:${options.colors.codeBg};padding:12px;border-radius:6px;margin:0;white-space:pre-wrap;word-break:break-word;"><code>${escaped}</code></p>`,
+    "12px 0"
+  );
+};
+
+const dividerToHtml = (options: RenderOptions): string =>
+  wrapSection(
+    `<p style="font-family:${options.fontStack};font-size:${options.typography.bodySize};line-height:1.6;margin:0;color:${options.colors.divider};text-align:center;">——</p>`,
+    "14px 0"
+  );
+
+const imageToHtml = (src: string, alt: string): string =>
+  wrapSection(
+    `<p style="margin:0;text-align:center;"><img src="${escapeHtml(src)}" alt="${escapeHtml(alt)}" style="max-width:100%;height:auto;border-radius:6px;" /></p>`,
+    "14px 0"
+  );
 
 const blockToHtml = (
   block: Block,
   options: RenderOptions,
   indexMap?: Map<string, number>
 ): string => {
-  const baseSize = Number.parseFloat(options.typography.bodySize) || 16;
-  const h1Size = Math.round(baseSize * 1.6);
-  const h2Size = Math.round(baseSize * 1.33);
-  const h3Size = Math.round(baseSize * 1.13);
-  const isPineapple = options.themeId === "red";
-  const isBlue = options.themeId === "blue";
-  const isBlack = options.themeId === "black";
-  const isSspai = options.themeId === "sspai";
-  const isAccentTheme = isPineapple || isBlue;
   switch (block.type) {
-    case "heading": {
-      const tag = block.level === 1 ? "h1" : block.level === 2 ? "h2" : "h3";
-      if (isSspai) {
-        if (block.level === 1) {
-          return `<${tag} style="line-height:1.5;font-size:${h1Size}px;font-family:${options.fontStack};font-weight:700;margin:0 auto ${Math.round(baseSize * 2.6)}px 0;width:fit-content;border-left:6px solid ${options.colors.link};padding-left:6px;color:${options.colors.text};">${inlinesToHtml(
-            block.children,
-            options,
-            indexMap
-          )}</${tag}>`;
-        }
-        if (block.level === 2) {
-          return `<${tag} style="line-height:1.5;font-family:${options.fontStack};font-size:${h2Size}px;font-weight:700;margin:${Math.round(baseSize * 2.6)}px auto;width:fit-content;color:${options.colors.text};">${inlinesToHtml(
-            block.children,
-            options,
-            indexMap
-          )}</${tag}>`;
-        }
-        return `<${tag} style="line-height:1.5;font-family:${options.fontStack};font-size:${h3Size}px;font-weight:700;margin:${Math.round(baseSize * 2.6)}px 0;width:fit-content;color:${options.colors.text};">${inlinesToHtml(
-          block.children,
-          options,
-          indexMap
-        )}</${tag}>`;
-      }
-      if (isBlack) {
-        if (block.level === 1) {
-          return `<${tag} style="line-height:1.5;font-size:${h1Size}px;font-family:${options.fontStack};font-weight:700;margin:0 auto ${Math.round(baseSize * 2.6)}px;width:fit-content;color:${options.colors.link};text-align:center;padding:0 1em;border-bottom:8px solid ${options.colors.link};">${inlinesToHtml(
-            block.children,
-            options,
-            indexMap
-          )}</${tag}>`;
-        }
-        if (block.level === 2) {
-          return `<${tag} style="line-height:1.5;font-family:${options.fontStack};font-size:${h2Size}px;font-weight:700;margin:${Math.round(baseSize * 2.6)}px auto;width:fit-content;color:${options.colors.link};text-align:center;padding:0 0.2em;">${inlinesToHtml(
-            block.children,
-            options,
-            indexMap
-          )}</${tag}>`;
-        }
-        return `<${tag} style="line-height:1.5;font-family:${options.fontStack};font-size:${h3Size}px;font-weight:700;margin:${Math.round(baseSize * 2.6)}px 0;width:fit-content;color:${options.colors.link};text-align:left;">${inlinesToHtml(
-          block.children,
-          options,
-          indexMap
-        )}</${tag}>`;
-      }
-      if (isAccentTheme) {
-        const accentBorder = isBlue ? "#7bb7e0" : options.colors.link;
-        const headingMargin = Math.round(baseSize * 2.6);
-        const h3MarginTop = isBlue ? Math.round(baseSize * 3.33) : headingMargin;
-        const h3MarginBottom = isBlue ? Math.round(baseSize * 2.67) : headingMargin;
-        if (block.level === 1) {
-          return `<${tag} style="line-height:1.5;font-size:${h1Size}px;font-family:${options.fontStack};font-weight:700;margin:0 auto ${headingMargin}px;width:fit-content;color:${options.colors.link};text-align:center;padding:0 1em;border-bottom:2px solid ${accentBorder};">${inlinesToHtml(
-            block.children,
-            options,
-            indexMap
-          )}</${tag}>`;
-        }
-        if (block.level === 2) {
-          const headingOptions: RenderOptions = {
-            ...options,
-            colors: { ...options.colors, link: "#ffffff" }
-          };
-          return `<${tag} style="line-height:1.5;font-family:${options.fontStack};font-size:${h2Size}px;font-weight:700;margin:${headingMargin}px auto;width:fit-content;background:${options.colors.link};color:#fff;text-align:center;padding:0 0.2em;">${inlinesToHtml(
-            block.children,
-            headingOptions,
-            indexMap
-          )}</${tag}>`;
-        }
-        return `<${tag} style="line-height:1.5;font-family:${options.fontStack};font-size:${h3Size}px;font-weight:700;margin:${h3MarginTop}px 0 ${h3MarginBottom}px;width:fit-content;color:#000;padding-left:8px;border-left:3px solid ${accentBorder};">${inlinesToHtml(
-          block.children,
-          options,
-          indexMap
-        )}</${tag}>`;
-      }
-      const fontSize =
-        block.level === 1 ? `${h1Size}px` : block.level === 2 ? `${h2Size}px` : `${h3Size}px`;
-      const marginTop = block.level === 1 ? `${Math.round(baseSize * 1.6)}px` : `${Math.round(baseSize * 1.4)}px`;
-      const marginBottom = block.level === 1 ? `${Math.round(baseSize * 0.9)}px` : `${Math.round(baseSize * 0.8)}px`;
-      return `<${tag} style="font-family:${options.fontStack};font-size:${fontSize};font-weight:${options.typography.headingWeight};margin:${marginTop} 0 ${marginBottom} 0;line-height:1.5;color:${options.colors.text};">${inlinesToHtml(
-        block.children,
-        options,
-        indexMap
-      )}</${tag}>`;
-    }
+    case "heading":
+      return headingToHtml(block.level, block.children, options, indexMap);
     case "paragraph":
-      return `<p style="font-family:${options.fontStack};font-size:${options.typography.bodySize};line-height:${options.typography.bodyLineHeight};margin:10px 0;color:${options.colors.text};font-weight:${options.typography.bodyWeight};${options.typography.letterSpacing ? `letter-spacing:${options.typography.letterSpacing};` : ""}text-align:left;white-space:pre-line;min-height:20px;padding-left:0em;">${inlinesToHtml(
-        block.children,
-        options,
-        indexMap
-      )}</p>`;
+      return paragraphToHtml(block.children, options, indexMap);
     case "quote":
-      if (isBlack) {
-        return `<blockquote style="font-family:${options.fontStack};border-left:8px solid ${options.colors.border};padding:10px;margin:20px 0;background-color:#f5f5f5;color:${options.colors.subText};line-height:${options.typography.bodyLineHeight};">${inlinesToHtml(
-          block.children,
-          options,
-          indexMap
-        )}</blockquote>`;
-      }
-      if (isSspai) {
-        return `<blockquote style="font-family:${options.fontStack};border-left:2px solid ${options.colors.link};padding:24px 16px 12px;margin:24px 0 36px;background:url('https://new-notion-1315843248.cos.ap-guangzhou.myqcloud.com/theme/pie/pie_blockquote.svg') 12px 0 / 12px no-repeat;color:${options.colors.subText};line-height:${options.typography.bodyLineHeight};">${inlinesToHtml(
-          block.children,
-          options,
-          indexMap
-        )}</blockquote>`;
-      }
-      return `<blockquote style="font-family:${options.fontStack};border-left:${isAccentTheme ? "3px" : "4px"} solid ${options.colors.border};padding:${isAccentTheme ? "1px 10px 1px 20px" : "0 0 0 12px"};margin:${isAccentTheme ? "20px 0" : "16px 0"};color:${options.colors.subText};line-height:${options.typography.bodyLineHeight};">${inlinesToHtml(
-        block.children,
-        options,
-        indexMap
-      )}</blockquote>`;
+      return quoteToHtml(block.children, options, indexMap);
+    case "callout":
+      return calloutToHtml(block.icon, block.children, options, indexMap);
     case "divider":
-      return isAccentTheme || isBlack || isSspai
-        ? `<hr style="border-style:solid;border-width:1px 0 0;border-color:${options.colors.divider};transform-origin:0 0;transform:scale(1,${isSspai ? "1" : "0.5"});margin:${isSspai ? "15px 0" : "16px 0"};" />`
-        : `<hr style="border:none;border-top:1px solid ${options.colors.divider};margin:16px 0;" />`;
+      return dividerToHtml(options);
     case "image":
-      return `<p style="text-align:center;margin:16px 0;"><img src="${escapeHtml(block.src)}" alt="${escapeHtml(block.alt ?? "")}" style="max-width:100%;border-radius:6px;" /></p>`;
+      return imageToHtml(block.src, block.alt ?? "");
     case "code":
-      return isPineapple
-        ? `<pre style="margin:20px 10px;display:block;font-size:${options.typography.bodySize};padding:10px;color:#333;position:relative;background-color:#fafafa;border:1px solid #f0f0f0;border-radius:5px;white-space:pre;box-shadow:0 2px 10px rgba(0,0,0,0.3);overflow:auto;font-family:${options.fontStack};line-height:1.6;">${escapeHtml(
-            block.code
-          )}</pre>`
-        : `<pre style="font-family:Menlo, Monaco, Consolas, monospace;background:${options.colors.codeBg};padding:12px;overflow-x:auto;border-radius:6px;font-size:13px;line-height:1.6;">${escapeHtml(block.code)}</pre>`;
+      return codeToHtml(block.code, options);
     case "list":
       return listToHtml(block, options, 0, indexMap);
     case "table":
@@ -339,30 +319,31 @@ const blockToHtml = (
 
 const renderReferencesSection = (
   items: ReferenceItem[],
-  options: RenderOptions,
-  indexMap: Map<string, number>
+  options: RenderOptions
 ): string => {
   if (items.length === 0) return "";
-  const headingHtml = blockToHtml(
-    { type: "heading", level: 3, children: [{ type: "text", content: "参考资料" }] },
-    options,
-    indexMap
+  const heading = wrapSection(
+    `<p style="font-family:${options.fontStack};font-size:${options.typography.bodySize};line-height:${options.typography.bodyLineHeight};font-weight:${options.typography.headingWeight};margin:0;color:${options.colors.text};${options.typography.letterSpacing ? `letter-spacing:${options.typography.letterSpacing};` : ""}"><strong>参考资料</strong></p>`,
+    "20px 0 8px 0"
   );
   const itemHtml = items
     .map((item, idx) => {
-      return `<p style="font-family:${options.fontStack};font-size:${options.typography.bodySize};line-height:${options.typography.bodyLineHeight};margin:6px 0;color:${options.colors.text};${options.typography.letterSpacing ? `letter-spacing:${options.typography.letterSpacing};` : ""}"><span style="opacity:0.6;">[${idx + 1}]</span> 链接: <em>${escapeHtml(
-        item.href
-      )}</em></p>`;
+      return wrapSection(
+        `<p style="${paragraphStyle(options)}margin:0;"><span style="opacity:0.6;">[${idx + 1}]</span> 链接: <em>${escapeHtml(
+          item.href
+        )}</em></p>`,
+        "6px 0"
+      );
     })
     .join("");
-  return `${headingHtml}${itemHtml}`;
+  return `${heading}${itemHtml}`;
 };
 
 export const renderDocToHtml = (doc: Doc, overrides?: Partial<RenderOptions>): string => {
   const options = mergeRenderOptions(overrides);
   const { items, indexMap } = collectReferences(doc);
   const bodyHtml = doc.blocks.map((block) => blockToHtml(block, options, indexMap)).join("");
-  const referencesHtml = renderReferencesSection(items, options, indexMap);
+  const referencesHtml = renderReferencesSection(items, options);
   return `${bodyHtml}${referencesHtml}`;
 };
 
@@ -401,6 +382,11 @@ export const renderDocToText = (doc: Doc): string => {
         case "paragraph":
         case "quote":
           return inlinesToText(block.children, indexMap);
+        case "callout": {
+          const icon = block.icon?.trim() || "💡";
+          const content = inlinesToText(block.children, indexMap);
+          return `${icon} ${content}`.trim();
+        }
         case "divider":
           return "---";
         case "image":
@@ -411,9 +397,7 @@ export const renderDocToText = (doc: Doc): string => {
           return listToText(block, indexMap);
         case "table":
           return block.rows
-            .map((row) =>
-              row.cells.map((cell) => inlinesToText(cell.children, indexMap)).join(" | ")
-            )
+            .map((row) => row.cells.map((cell) => inlinesToText(cell.children, indexMap)).join(" | "))
             .join("\n");
         default:
           return "";
