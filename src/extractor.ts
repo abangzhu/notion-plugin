@@ -164,6 +164,67 @@ const extractListBlock = (listEl: HTMLOListElement | HTMLUListElement): ListBloc
   };
 };
 
+const toSingleItemListBlock = (blockEl: HTMLElement, ordered: boolean): ListBlock | null => {
+  const children = extractInlinesFromNode(blockEl).filter((inline) => inline.content.trim().length > 0);
+  if (!children.length) return null;
+  return {
+    type: "list",
+    ordered,
+    items: [{ children }]
+  };
+};
+
+const extractListItemBlockFromHint = (blockEl: HTMLElement): ListBlock | null => {
+  const blockType = (blockEl.getAttribute("data-block-type") ?? "").toLowerCase();
+  const className = blockEl.className?.toString().toLowerCase() ?? "";
+  const hint = `${blockType} ${className}`;
+
+  if (
+    hint.includes("numbered_list_item") ||
+    hint.includes("numbered-list-item") ||
+    hint.includes("notion-numbered")
+  ) {
+    return toSingleItemListBlock(blockEl, true);
+  }
+
+  if (
+    hint.includes("bulleted_list_item") ||
+    hint.includes("bulleted-list-item") ||
+    hint.includes("notion-bulleted")
+  ) {
+    return toSingleItemListBlock(blockEl, false);
+  }
+
+  return null;
+};
+
+const mergeAdjacentLists = (blocks: Block[]): Block[] => {
+  const merged: Block[] = [];
+
+  blocks.forEach((block) => {
+    if (block.type !== "list") {
+      merged.push(block);
+      return;
+    }
+
+    const prev = merged[merged.length - 1];
+    if (
+      prev &&
+      prev.type === "list" &&
+      prev.ordered === block.ordered &&
+      prev.items.every((item) => !item.nested?.length) &&
+      block.items.every((item) => !item.nested?.length)
+    ) {
+      prev.items.push(...block.items);
+      return;
+    }
+
+    merged.push(block);
+  });
+
+  return merged;
+};
+
 const extractBlock = (blockEl: HTMLElement): Block | null => {
   const tableEl = blockEl.querySelector("table");
   if (tableEl) {
@@ -218,6 +279,9 @@ const extractBlock = (blockEl: HTMLElement): Block | null => {
     return extractListBlock(listEl as HTMLOListElement | HTMLUListElement);
   }
 
+  const hintedListBlock = extractListItemBlockFromHint(blockEl);
+  if (hintedListBlock) return hintedListBlock;
+
   const calloutBlock = extractCalloutBlock(blockEl);
   if (calloutBlock) return calloutBlock;
 
@@ -246,8 +310,9 @@ export const extractDocFromNotion = (): Doc => {
     document.body;
 
   const blocks = getBlockElements(root).map(extractBlock).filter((block): block is Block => Boolean(block));
+  const mergedBlocks = mergeAdjacentLists(blocks);
 
   return {
-    blocks
+    blocks: mergedBlocks
   };
 };
