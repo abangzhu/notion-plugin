@@ -111,6 +111,8 @@ const extractCalloutBlock = (blockEl: HTMLElement): Block | null => {
     ? blockEl
     : blockEl.querySelector<HTMLElement>(CALLOUT_SELECTOR);
   if (!calloutEl) return null;
+  const ownerBlock = calloutEl.closest<HTMLElement>("[data-block-id]");
+  if (ownerBlock && ownerBlock !== blockEl) return null;
 
   const iconEl = calloutEl.querySelector<HTMLElement>('[class*="notion-page-icon"], [role="img"]');
   const icon = iconEl?.textContent?.trim() || undefined;
@@ -188,9 +190,6 @@ const extractBlock = (blockEl: HTMLElement): Block | null => {
     };
   }
 
-  const calloutBlock = extractCalloutBlock(blockEl);
-  if (calloutBlock) return calloutBlock;
-
   const codeEl = blockEl.querySelector("pre");
   if (codeEl) {
     return {
@@ -218,6 +217,9 @@ const extractBlock = (blockEl: HTMLElement): Block | null => {
   if (listEl && (listEl.tagName === "UL" || listEl.tagName === "OL")) {
     return extractListBlock(listEl as HTMLOListElement | HTMLUListElement);
   }
+
+  const calloutBlock = extractCalloutBlock(blockEl);
+  if (calloutBlock) return calloutBlock;
 
   const imgEl = blockEl.querySelector("img");
   if (imgEl && imgEl.getAttribute("src")) {
