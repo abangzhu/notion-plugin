@@ -296,12 +296,15 @@ const createDrawer = () => {
 };
 
 export const initDrawer = () => {
+  type PreviewMode = "wechat" | "markdown";
+
   let drawer = document.getElementById(DRAWER_ID) as HTMLElement | null;
   let previewPage: HTMLElement | null = null;
   let status: HTMLElement | null = null;
   let lastHtml = "";
   let lastText = "";
   let lastMarkdown = "";
+  let previewMode: PreviewMode = "wechat";
   let outsideListenerAttached = false;
   let closing = false;
 
@@ -313,6 +316,27 @@ export const initDrawer = () => {
     if (!status) return;
     status.textContent = message;
     status.style.color = tone === "success" ? "#047857" : tone === "error" ? "#b91c1c" : "#6b7280";
+  };
+
+  const escapePreviewText = (input: string): string =>
+    input
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/\"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+
+  const renderPreview = () => {
+    if (!previewPage) return;
+    if (previewMode === "markdown") {
+      const markdown = lastMarkdown || "未检测到可用内容";
+      previewPage.innerHTML = `<pre style="margin:0;white-space:pre-wrap;word-break:break-word;font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,'Liberation Mono','Courier New',monospace;font-size:13px;line-height:1.6;color:#111827;">${escapePreviewText(
+        markdown
+      )}</pre>`;
+      return;
+    }
+    previewPage.innerHTML =
+      lastHtml || "<p style=\"color:#9ca3af;font-size:13px;\">未检测到可用内容</p>";
   };
 
   const computeTypography = (): Typography => {
@@ -362,10 +386,7 @@ export const initDrawer = () => {
     lastHtml = renderDocToHtml(doc, buildRenderOptions());
     lastText = renderDocToText(doc);
     lastMarkdown = renderDocToMarkdown(doc);
-    if (previewPage) {
-      previewPage.innerHTML =
-        lastHtml || "<p style=\"color:#9ca3af;font-size:13px;\">未检测到可用内容</p>";
-    }
+    renderPreview();
     setStatus("");
   };
 
@@ -476,6 +497,8 @@ export const initDrawer = () => {
     });
 
     created.copyAllButton.addEventListener("click", async () => {
+      previewMode = "wechat";
+      renderPreview();
       try {
         await writeClipboard(lastHtml, lastText);
         setStatus("已复制为公众号格式", "success");
@@ -485,9 +508,11 @@ export const initDrawer = () => {
     });
 
     created.copyMarkdownButton.addEventListener("click", async () => {
+      previewMode = "markdown";
+      renderPreview();
       try {
         await navigator.clipboard.writeText(lastMarkdown);
-        setStatus("已复制为 Markdown", "success");
+        setStatus("已复制为 Markdown（预览已切换）", "success");
       } catch (error) {
         setStatus("复制失败，请重试", "error");
       }
