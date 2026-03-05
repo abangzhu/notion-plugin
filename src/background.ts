@@ -21,3 +21,5 @@ chrome.action.onClicked.addListener(async (tab) => {
     }
   }
 });
+
+// Image upload removed: images are copied as-is in HTML output.

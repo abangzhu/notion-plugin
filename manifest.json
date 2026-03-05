@@ -4,7 +4,15 @@
   "version": "1.0",
   "description": "Convert Notion pages to WeChat-ready HTML optimized for iOS reading.",
   "permissions": ["activeTab", "clipboardWrite", "scripting"],
-  "host_permissions": ["https://www.notion.so/*"],
+  "host_permissions": [
+    "https://www.notion.so/*",
+    "https://*.notion.site/*",
+    "https://secure.notion-static.com/*",
+    "https://*.secure.notion-static.com/*",
+    "https://*.amazonaws.com/*",
+    "https://*.s3.amazonaws.com/*",
+    "https://*.cloudfront.net/*"
+  ],
   "action": {
     "default_title": "Notion2WeChat"
   },

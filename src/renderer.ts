@@ -63,6 +63,7 @@ const collectReferences = (doc: Doc): { items: ReferenceItem[]; indexMap: Map<st
       case "heading":
       case "paragraph":
       case "quote":
+      case "callout":
         collectReferencesFromInlines(block.children, items, indexMap);
         break;
       case "list":
@@ -89,7 +90,7 @@ const inlineToHtml = (
   const isBlack = options.themeId === "black";
   const isSspai = options.themeId === "sspai";
   const isAccentTheme = isPineapple || isBlue || isSspai;
-  const inlineAccent = inline.color === "accent";
+  const inlineAccent = "color" in inline && inline.color === "accent";
   switch (inline.type) {
     case "text":
       return inlineAccent
@@ -123,6 +124,9 @@ const inlinesToHtml = (
   indexMap?: Map<string, number>
 ): string => inlines.map((inline) => inlineToHtml(inline, options, indexMap)).join("");
 
+const buildBodyParagraphStyle = (options: RenderOptions, color?: string): string =>
+  `font-family:${options.fontStack};font-size:${options.typography.bodySize};line-height:${options.typography.bodyLineHeight};margin:10px 0;color:${color ?? options.colors.text};font-weight:${options.typography.bodyWeight};${options.typography.letterSpacing ? `letter-spacing:${options.typography.letterSpacing};` : ""}text-align:left;white-space:pre-line;min-height:20px;padding-left:0em;`;
+
 const listItemToHtml = (
   item: ListItem,
   options: RenderOptions,
@@ -130,13 +134,11 @@ const listItemToHtml = (
   indexMap?: Map<string, number>,
   textColor?: string
 ): string => {
+  const textHtml = inlinesToHtml(item.children, options, indexMap) || "<br/>";
   const nestedHtml =
     item.nested?.map((nested) => listToHtml(nested, options, depth + 1, indexMap)).join("") ?? "";
-  return `<li style="margin:6px 0;${textColor ? `color:${textColor};` : ""}">${inlinesToHtml(
-    item.children,
-    options,
-    indexMap
-  )}${nestedHtml}</li>`;
+  const paragraphStyle = buildBodyParagraphStyle(options, textColor);
+  return `<li><p style="${paragraphStyle}"><span leaf="">${textHtml}</span></p>${nestedHtml}</li>`;
 };
 
 const listToHtml = (
@@ -146,24 +148,17 @@ const listToHtml = (
   indexMap?: Map<string, number>
 ): string => {
   const tag = list.ordered ? "ol" : "ul";
+  const orderedStyles = ["decimal", "lower-alpha", "lower-roman", "upper-alpha", "upper-roman"];
+  const unorderedStyles = ["disc", "circle", "square"];
   const listStyleType = list.ordered
-    ? depth === 0
-      ? "decimal"
-      : depth === 1
-        ? "lower-alpha"
-        : "lower-roman"
-    : depth === 0
-      ? "disc"
-      : depth === 1
-        ? "circle"
-        : "square";
+    ? orderedStyles[Math.min(depth, orderedStyles.length - 1)]
+    : unorderedStyles[Math.min(depth, unorderedStyles.length - 1)];
   const isAccentTheme = options.themeId === "red" || options.themeId === "blue" || options.themeId === "sspai";
-  const listColor = !list.ordered && isAccentTheme ? options.colors.link : options.colors.text;
-  const itemTextColor = !list.ordered && isAccentTheme ? options.colors.text : undefined;
+  const itemTextColor = !list.ordered && isAccentTheme ? options.colors.text : options.colors.text;
   const listItems = list.items
     .map((item) => listItemToHtml(item, options, depth, indexMap, itemTextColor))
     .join("");
-  return `<${tag} style="font-family:${options.fontStack};font-size:${options.typography.bodySize};padding-left:1.5em;margin:10px 0;color:${listColor};line-height:${options.typography.bodyLineHeight};list-style-type:${listStyleType};list-style-position:outside;${options.typography.letterSpacing ? `letter-spacing:${options.typography.letterSpacing};` : ""}">${listItems}</${tag}>`;
+  return `<${tag} style="list-style-type: ${listStyleType};padding-left:1.5em;list-style-position:outside;" class="list-paddingleft-1">${listItems}</${tag}>`;
 };
 
 const tableToHtml = (
@@ -291,7 +286,7 @@ const blockToHtml = (
       )}</${tag}>`;
     }
     case "paragraph":
-      return `<p style="font-family:${options.fontStack};font-size:${options.typography.bodySize};line-height:${options.typography.bodyLineHeight};margin:10px 0;color:${options.colors.text};font-weight:${options.typography.bodyWeight};${options.typography.letterSpacing ? `letter-spacing:${options.typography.letterSpacing};` : ""}text-align:left;white-space:pre-line;min-height:20px;padding-left:0em;">${inlinesToHtml(
+      return `<p style="${buildBodyParagraphStyle(options)}">${inlinesToHtml(
         block.children,
         options,
         indexMap
@@ -316,6 +311,17 @@ const blockToHtml = (
         options,
         indexMap
       )}</blockquote>`;
+    case "callout": {
+      const icon = escapeHtml((block.icon || "💡").trim() || "💡");
+      const inner = inlinesToHtml(block.children, options, indexMap) || "<br/>";
+      if (isBlack) {
+        return `<section style="margin:16px 0;padding:10px 12px;background:#f5f5f5;border-left:8px solid ${options.colors.border};color:${options.colors.text};font-family:${options.fontStack};line-height:${options.typography.bodyLineHeight};font-size:${options.typography.bodySize};${options.typography.letterSpacing ? `letter-spacing:${options.typography.letterSpacing};` : ""}"><p style="margin:0;"><strong style="margin-right:6px;">${icon}</strong>${inner}</p></section>`;
+      }
+      if (isSspai) {
+        return `<section style="margin:16px 0;padding:10px 12px;background:#fff7f7;border-left:2px solid ${options.colors.link};color:${options.colors.text};font-family:${options.fontStack};line-height:${options.typography.bodyLineHeight};font-size:${options.typography.bodySize};${options.typography.letterSpacing ? `letter-spacing:${options.typography.letterSpacing};` : ""}"><p style="margin:0;"><strong style="margin-right:6px;color:${options.colors.link};">${icon}</strong>${inner}</p></section>`;
+      }
+      return `<section style="margin:16px 0;padding:10px 12px;background:${options.colors.codeBg};border-left:3px solid ${options.colors.border};border-radius:4px;color:${options.colors.text};font-family:${options.fontStack};line-height:${options.typography.bodyLineHeight};font-size:${options.typography.bodySize};${options.typography.letterSpacing ? `letter-spacing:${options.typography.letterSpacing};` : ""}"><p style="margin:0;"><strong style="margin-right:6px;color:${isAccentTheme ? options.colors.link : options.colors.text};">${icon}</strong>${inner}</p></section>`;
+    }
     case "divider":
       return isAccentTheme || isBlack || isSspai
         ? `<hr style="border-style:solid;border-width:1px 0 0;border-color:${options.colors.divider};transform-origin:0 0;transform:scale(1,${isSspai ? "1" : "0.5"});margin:${isSspai ? "15px 0" : "16px 0"};" />`
@@ -401,6 +407,11 @@ export const renderDocToText = (doc: Doc): string => {
         case "paragraph":
         case "quote":
           return inlinesToText(block.children, indexMap);
+        case "callout": {
+          const icon = block.icon?.trim() || "💡";
+          const content = inlinesToText(block.children, indexMap);
+          return `${icon} ${content}`.trim();
+        }
         case "divider":
           return "---";
         case "image":

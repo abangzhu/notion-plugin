@@ -99,6 +99,36 @@ const extractInlinesFromNodes = (nodes: Node[]): Inline[] => {
   return inlines;
 };
 
+const CALLOUT_SELECTOR = '[class*="notion-callout"], [data-block-type="callout"]';
+
+const normalizeInlineContent = (inlines: Inline[]): Inline[] => {
+  const hasVisibleText = inlines.some((inline) => inline.content.trim().length > 0);
+  return hasVisibleText ? inlines : [];
+};
+
+const extractCalloutBlock = (blockEl: HTMLElement): Block | null => {
+  const calloutEl = blockEl.matches(CALLOUT_SELECTOR)
+    ? blockEl
+    : blockEl.querySelector<HTMLElement>(CALLOUT_SELECTOR);
+  if (!calloutEl) return null;
+  const ownerBlock = calloutEl.closest<HTMLElement>("[data-block-id]");
+  if (ownerBlock && ownerBlock !== blockEl) return null;
+
+  const iconEl = calloutEl.querySelector<HTMLElement>('[class*="notion-page-icon"], [role="img"]');
+  const icon = iconEl?.textContent?.trim() || undefined;
+  const textEl =
+    calloutEl.querySelector<HTMLElement>('[class*="notion-callout-text"]') ??
+    calloutEl.querySelector<HTMLElement>('[class*="notion-semantic-string"]') ??
+    calloutEl;
+  const children = normalizeInlineContent(extractInlinesFromNode(textEl));
+  if (!children.length && !icon) return null;
+  return {
+    type: "callout",
+    icon,
+    children
+  };
+};
+
 const getBlockElements = (root: Element): HTMLElement[] => {
   const allBlocks = Array.from(root.querySelectorAll<HTMLElement>("[data-block-id]"));
   return allBlocks.filter((block) => {
@@ -132,6 +162,67 @@ const extractListBlock = (listEl: HTMLOListElement | HTMLUListElement): ListBloc
     ordered,
     items
   };
+};
+
+const toSingleItemListBlock = (blockEl: HTMLElement, ordered: boolean): ListBlock | null => {
+  const children = extractInlinesFromNode(blockEl).filter((inline) => inline.content.trim().length > 0);
+  if (!children.length) return null;
+  return {
+    type: "list",
+    ordered,
+    items: [{ children }]
+  };
+};
+
+const extractListItemBlockFromHint = (blockEl: HTMLElement): ListBlock | null => {
+  const blockType = (blockEl.getAttribute("data-block-type") ?? "").toLowerCase();
+  const className = blockEl.className?.toString().toLowerCase() ?? "";
+  const hint = `${blockType} ${className}`;
+
+  if (
+    hint.includes("numbered_list_item") ||
+    hint.includes("numbered-list-item") ||
+    hint.includes("notion-numbered")
+  ) {
+    return toSingleItemListBlock(blockEl, true);
+  }
+
+  if (
+    hint.includes("bulleted_list_item") ||
+    hint.includes("bulleted-list-item") ||
+    hint.includes("notion-bulleted")
+  ) {
+    return toSingleItemListBlock(blockEl, false);
+  }
+
+  return null;
+};
+
+const mergeAdjacentLists = (blocks: Block[]): Block[] => {
+  const merged: Block[] = [];
+
+  blocks.forEach((block) => {
+    if (block.type !== "list") {
+      merged.push(block);
+      return;
+    }
+
+    const prev = merged[merged.length - 1];
+    if (
+      prev &&
+      prev.type === "list" &&
+      prev.ordered === block.ordered &&
+      prev.items.every((item) => !item.nested?.length) &&
+      block.items.every((item) => !item.nested?.length)
+    ) {
+      prev.items.push(...block.items);
+      return;
+    }
+
+    merged.push(block);
+  });
+
+  return merged;
 };
 
 const extractBlock = (blockEl: HTMLElement): Block | null => {
@@ -188,6 +279,12 @@ const extractBlock = (blockEl: HTMLElement): Block | null => {
     return extractListBlock(listEl as HTMLOListElement | HTMLUListElement);
   }
 
+  const hintedListBlock = extractListItemBlockFromHint(blockEl);
+  if (hintedListBlock) return hintedListBlock;
+
+  const calloutBlock = extractCalloutBlock(blockEl);
+  if (calloutBlock) return calloutBlock;
+
   const imgEl = blockEl.querySelector("img");
   if (imgEl && imgEl.getAttribute("src")) {
     return {
@@ -213,8 +310,9 @@ export const extractDocFromNotion = (): Doc => {
     document.body;
 
   const blocks = getBlockElements(root).map(extractBlock).filter((block): block is Block => Boolean(block));
+  const mergedBlocks = mergeAdjacentLists(blocks);
 
   return {
-    blocks
+    blocks: mergedBlocks
   };
 };

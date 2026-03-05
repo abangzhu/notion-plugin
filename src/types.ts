@@ -8,6 +8,7 @@ export type Block =
   | ParagraphBlock
   | ListBlock
   | QuoteBlock
+  | CalloutBlock
   | DividerBlock
   | ImageBlock
   | CodeBlock
@@ -26,6 +27,12 @@ export type ParagraphBlock = {
 
 export type QuoteBlock = {
   type: "quote";
+  children: Inline[];
+};
+
+export type CalloutBlock = {
+  type: "callout";
+  icon?: string;
   children: Inline[];
 };
 
