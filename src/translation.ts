@@ -10,6 +10,7 @@ export type TranslationState = "idle" | "translating" | "success" | "error" | "s
 export type PreviewContentMode = "original" | "translated";
 export type PreviewFormatMode = "wechat" | "markdown";
 export type TranslationStep = "prepare" | "analyze" | "translate" | "apply";
+export type DetectedLanguage = "zh-CN" | "en" | "unknown";
 
 export type TranslationSettings = {
   apiKey: string;
@@ -354,3 +355,34 @@ export const applyTranslationOutputsToDoc = (doc: Doc, translatedOutputs: Transl
 };
 
 export const getTranslationSourceText = (doc: Doc): string => renderDocToText(doc);
+
+export const detectDocLanguage = (doc: Doc): DetectedLanguage => {
+  const text = getTranslationSourceText(doc).trim();
+  if (!text) return "unknown";
+
+  const cjkMatches = text.match(/[\u3400-\u4dbf\u4e00-\u9fff]/g) ?? [];
+  const latinMatches = text.match(/[A-Za-z]/g) ?? [];
+  const englishWordMatches = text.match(/\b[A-Za-z][A-Za-z'-]*\b/g) ?? [];
+
+  const cjkCount = cjkMatches.length;
+  const latinCount = latinMatches.length;
+  const englishWordCount = englishWordMatches.length;
+
+  if (cjkCount >= 12 && cjkCount >= latinCount * 0.6) {
+    return "zh-CN";
+  }
+
+  if (englishWordCount >= 8 && latinCount > cjkCount * 1.5) {
+    return "en";
+  }
+
+  if (cjkCount >= 6 && cjkCount > latinCount) {
+    return "zh-CN";
+  }
+
+  if (englishWordCount >= 4 && latinCount > cjkCount) {
+    return "en";
+  }
+
+  return "unknown";
+};
