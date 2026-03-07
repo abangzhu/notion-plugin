@@ -1,5 +1,8 @@
 import OpenAI from "openai";
 
+import analysisPromptTemplate from "./prompts/translation-analysis.md";
+import commonRulesTemplate from "./prompts/translation-common-rules.md";
+import translationPromptTemplate from "./prompts/translation-structured.md";
 import { getTranslationSourceText } from "./translation";
 import type { Doc } from "./types";
 import type { TranslationInput, TranslationOutput, TranslationSettings } from "./translation";
@@ -21,21 +24,32 @@ const createOpenAIClient = (settings: TranslationSettings) =>
     dangerouslyAllowBrowser: true
   });
 
+const renderPromptTemplate = (
+  template: string,
+  variables: Record<string, string>
+): string =>
+  Object.entries(variables).reduce(
+    (output, [key, value]) => output.split(`{{${key}}}`).join(value.trim()),
+    template
+  );
+
 const buildCommonTranslationRules = (settings: TranslationSettings): string => {
   const glossary = settings.glossary.trim();
   const preserveTerms = settings.preserveTerms.trim();
   const extraInstructions = settings.extraInstructions.trim();
 
-  return [
-    `Target language: ${settings.targetLanguage}`,
-    `Audience: ${settings.audience}`,
-    `Style: ${settings.stylePreset}`,
-    glossary ? `Glossary:\n${glossary}` : "",
-    preserveTerms ? `Preserve these terms unchanged when appropriate:\n${preserveTerms}` : "",
-    extraInstructions ? `Extra instructions:\n${extraInstructions}` : ""
-  ]
-    .filter(Boolean)
-    .join("\n\n");
+  return renderPromptTemplate(commonRulesTemplate, {
+    TARGET_LANGUAGE: settings.targetLanguage,
+    AUDIENCE: settings.audience,
+    STYLE: settings.stylePreset,
+    GLOSSARY_BLOCK: glossary ? `\n\nGlossary:\n${glossary}` : "",
+    PRESERVE_TERMS_BLOCK: preserveTerms
+      ? `\n\nPreserve these terms unchanged when appropriate:\n${preserveTerms}`
+      : "",
+    EXTRA_INSTRUCTIONS_BLOCK: extraInstructions
+      ? `\n\nExtra instructions:\n${extraInstructions}`
+      : ""
+  });
 };
 
 const chunkInputs = (
@@ -99,18 +113,10 @@ export const analyzeTranslationSource = async (params: {
   signal: AbortSignal;
 }): Promise<AnalysisResult> => {
   const sourceText = getTranslationSourceText(params.doc).slice(0, 12000);
-
-  const input = [
-    "You analyze source articles before translation.",
-    "Return strict JSON with a single key `summary`.",
-    "Keep it concise, practical, and focused on tone, terminology, and translation risks.",
-    "",
-    buildCommonTranslationRules(params.settings),
-    "",
-    "Analyze the following source text for translation. Focus on terminology, tone, audience fit, and any phrases that must remain consistent.",
-    "",
-    sourceText
-  ].join("\n");
+  const input = renderPromptTemplate(analysisPromptTemplate, {
+    COMMON_RULES: buildCommonTranslationRules(params.settings),
+    SOURCE_TEXT: sourceText
+  });
 
   return callResponsesApi<AnalysisResult>({
     settings: params.settings,
@@ -132,35 +138,20 @@ export const translateInputs = async (params: {
 
   for (let index = 0; index < chunks.length; index += 1) {
     const chunk = chunks[index];
-
-    const input = [
-      "You are a translation engine for structured article content.",
-      "Return strict JSON with a single key `items`, where `items` is an array of objects: `{ \"id\": string, \"content\": string }`.",
-      "Preserve every item id exactly.",
-      "For `rich_text` content, preserve all XML-like tags exactly: <text>, <bold>, <italic>, <code>, <link href=\"...\">.",
-      "Translate only the human-readable text.",
-      "Do not translate code inside <code> tags.",
-      "Do not modify href values.",
-      "Do not add explanations outside the translated content.",
-      "",
-      buildCommonTranslationRules(params.settings),
-      "",
-      params.mode === "normal" && params.analysisSummary
-        ? `Analysis summary:\n${params.analysisSummary}`
-        : "",
-      "",
-      "Translate the following structured items.",
-      "",
-      JSON.stringify(
+    const input = renderPromptTemplate(translationPromptTemplate, {
+      COMMON_RULES: buildCommonTranslationRules(params.settings),
+      ANALYSIS_BLOCK:
+        params.mode === "normal" && params.analysisSummary
+          ? `Analysis summary:\n${params.analysisSummary}`
+          : "",
+      ITEMS_JSON: JSON.stringify(
         {
           items: chunk
         },
         null,
         2
       )
-    ]
-      .filter(Boolean)
-      .join("\n");
+    });
 
     const payload = await callResponsesApi<{ items: TranslationOutput[] }>({
       settings: params.settings,

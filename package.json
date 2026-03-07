@@ -4,8 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "esbuild src/background.ts src/content.ts --bundle --outdir=dist --target=chrome114 --format=esm",
-    "dev": "esbuild src/background.ts src/content.ts --bundle --outdir=dist --target=chrome114 --format=esm --watch",
+    "build": "esbuild src/background.ts src/content.ts --bundle --outdir=dist --target=chrome114 --format=esm --loader:.md=text",
+    "dev": "esbuild src/background.ts src/content.ts --bundle --outdir=dist --target=chrome114 --format=esm --loader:.md=text --watch",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
