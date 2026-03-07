@@ -10,6 +10,7 @@ import {
 import {
   applyTranslationOutputsToDoc,
   DEFAULT_TRANSLATION_SETTINGS,
+  detectDocLanguage,
   hashDoc,
   normalizeTranslationSettings,
   TRANSLATION_PORT_NAME,
@@ -23,6 +24,7 @@ import {
   FONT_STACK_PINGFANG
 } from "./theme";
 import type {
+  DetectedLanguage,
   PreviewContentMode,
   PreviewFormatMode,
   TranslationPortServerMessage,
@@ -892,6 +894,7 @@ export const initDrawer = () => {
   let translatedHtml = "";
   let translatedText = "";
   let translatedMarkdown = "";
+  let sourceLanguage: DetectedLanguage = "unknown";
 
   let previewMode: PreviewFormatMode = "wechat";
   let contentMode: PreviewContentMode = "original";
@@ -909,6 +912,23 @@ export const initDrawer = () => {
   let statusMessage = "";
   let statusTone: StatusTone = "info";
   let translationStatusMessage = "";
+
+  const getLanguageLabel = (language: DetectedLanguage | string): string => {
+    if (language === "zh-CN") return "中文";
+    if (language === "en") return "English";
+    return "当前语言";
+  };
+
+  const getTranslateDisabledReason = (): string => {
+    if (!sourceDoc || !sourceHash) return "未检测到可翻译内容";
+    if (translationState === "translating") return "";
+    if (sourceLanguage !== "unknown" && sourceLanguage === translationSettings.targetLanguage) {
+      return `当前文章已是${getLanguageLabel(sourceLanguage)}，无需翻译到${getLanguageLabel(
+        translationSettings.targetLanguage
+      )}`;
+    }
+    return "";
+  };
 
   const setStatusTone = (element: HTMLElement, tone: StatusTone) => {
     element.style.color =
@@ -1172,6 +1192,10 @@ export const initDrawer = () => {
     applySegmentStyle(drawerRefs.wechatPreviewButton, previewMode === "wechat");
     applySegmentStyle(drawerRefs.markdownPreviewButton, previewMode === "markdown");
 
+    const translateDisabledReason = getTranslateDisabledReason();
+    const translateDisabled =
+      (translationState !== "translating" && translateDisabledReason.length > 0) || false;
+
     drawerRefs.translateSpinner.style.display = translationState === "translating" ? "inline-block" : "none";
     drawerRefs.translateLabel.textContent =
       translationState === "translating"
@@ -1180,10 +1204,19 @@ export const initDrawer = () => {
           ? "重新翻译"
           : "翻译";
     drawerRefs.translateButton.title =
-      translationState === "translating" ? "点击取消当前翻译" : "";
-    drawerRefs.translateButton.style.opacity = translationState === "translating" ? "0.92" : "1";
+      translationState === "translating"
+        ? "点击取消当前翻译"
+        : translateDisabledReason;
+    drawerRefs.translateButton.style.opacity =
+      translationState === "translating" ? "0.92" : translateDisabled ? "0.48" : "1";
     drawerRefs.translateButton.style.cursor =
-      translationState === "translating" ? "progress" : "pointer";
+      translationState === "translating"
+        ? "progress"
+        : translateDisabled
+          ? "not-allowed"
+          : "pointer";
+    drawerRefs.translateButton.disabled =
+      translationState !== "translating" && translateDisabled;
 
     const hasActiveContent =
       getCurrentHtml().trim().length > 0 || getCurrentMarkdown().trim().length > 0;
@@ -1336,6 +1369,13 @@ export const initDrawer = () => {
       return;
     }
 
+    const translateDisabledReason = getTranslateDisabledReason();
+    if (translateDisabledReason) {
+      setStatusMessage(translateDisabledReason, "info");
+      syncControlState();
+      return;
+    }
+
     if (!translationSettings.apiKey || !translationSettings.model) {
       setStatusMessage("请先在设置中补全 API Key 和模型", "error");
       await openSettings();
@@ -1415,6 +1455,12 @@ export const initDrawer = () => {
         rebuildRenderedContent();
         syncControlState();
 
+        const translateDisabledReason = getTranslateDisabledReason();
+        if (translateDisabledReason) {
+          setStatusMessage(translateDisabledReason, "info");
+          return;
+        }
+
         const restored = await maybeRestoreCachedTranslation(false, false);
         if (restored) {
           setStatusMessage("已加载新设置对应的缓存译文", "success");
@@ -1459,7 +1505,22 @@ export const initDrawer = () => {
 
     sourceDoc = nextSourceDoc;
     sourceHash = nextSourceHash;
+    sourceLanguage = detectDocLanguage(nextSourceDoc);
     rebuildRenderedContent();
+
+    if (sourceLanguage !== "unknown" && sourceLanguage === translationSettings.targetLanguage) {
+      clearTranslatedContent();
+      translationState = "idle";
+      contentMode = "original";
+      syncControlState();
+      setStatusMessage(
+        `当前文章已是${getLanguageLabel(sourceLanguage)}，无需翻译到${getLanguageLabel(
+          translationSettings.targetLanguage
+        )}`,
+        "info"
+      );
+      return;
+    }
 
     const restored = await maybeRestoreCachedTranslation(
       activateCachedTranslation || contentMode === "translated",
