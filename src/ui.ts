@@ -26,6 +26,7 @@ import {
 import type {
   DetectedLanguage,
   PreviewContentMode,
+  TranslationBackgroundState,
   PreviewFormatMode,
   TranslationPortServerMessage,
   TranslationSettings,
@@ -901,6 +902,7 @@ export const initDrawer = () => {
   let translationState: TranslationState = "idle";
   let translationJobId = "";
   let translationPort: chrome.runtime.Port | null = null;
+  let suppressNextTranslationDisconnect = false;
 
   let currentTheme = THEME_PRESETS[0];
   let currentFont = FONT_PRESETS[0];
@@ -952,6 +954,14 @@ export const initDrawer = () => {
   const setTranslationStatus = (message: string) => {
     translationStatusMessage = message;
     updateStatus();
+  };
+
+  const getTranslationProgressMessage = (message: {
+    label?: string;
+    detail?: string;
+  }): string => {
+    if (!message.label) return message.detail ?? "";
+    return message.detail ? `${message.label} · ${message.detail}` : message.label;
   };
 
   const setSettingsStatus = (message: string, tone: StatusTone = "info") => {
@@ -1286,7 +1296,8 @@ export const initDrawer = () => {
 
   const cancelActiveTranslation = (showMessage = true) => {
     if (translationState !== "translating" || !translationJobId) return;
-    translationPort?.postMessage({ type: "translation/cancel", jobId: translationJobId });
+    const port = translationPort ?? ensureTranslationPort();
+    port.postMessage({ type: "translation/cancel", jobId: translationJobId });
     translationJobId = "";
     translationState = translatedDoc ? "success" : "idle";
     setTranslationStatus("");
@@ -1296,12 +1307,90 @@ export const initDrawer = () => {
     }
   };
 
+  const handleBackgroundTranslationState = async (state: TranslationBackgroundState | null) => {
+    if (!sourceDoc || !sourceHash) return;
+
+    const sameLanguageTarget =
+      sourceLanguage !== "unknown" && sourceLanguage === translationSettings.targetLanguage;
+
+    if (!state) {
+      if (translationState === "translating") {
+        translationJobId = "";
+        translationState = translatedDoc ? "success" : "idle";
+        setTranslationStatus("");
+        syncControlState();
+      }
+      return;
+    }
+
+    if (sameLanguageTarget) {
+      if (state.status === "translating") {
+        ensureTranslationPort().postMessage({ type: "translation/cancel", jobId: state.jobId });
+      }
+      translationJobId = "";
+      translationState = "idle";
+      setTranslationStatus("");
+      syncControlState();
+      return;
+    }
+
+    if (state.sourceHash !== sourceHash) {
+      if (state.status === "translating") {
+        ensureTranslationPort().postMessage({ type: "translation/cancel", jobId: state.jobId });
+      }
+      if (translationState === "translating") {
+        translationJobId = "";
+        translationState = translatedDoc ? "success" : "idle";
+        setTranslationStatus("");
+        syncControlState();
+      }
+      return;
+    }
+
+    if (state.status === "translating") {
+      translationJobId = state.jobId;
+      translationState = "translating";
+      setTranslationStatus(getTranslationProgressMessage(state));
+      syncControlState();
+      return;
+    }
+
+    if (state.status === "success") {
+      translationJobId = "";
+      setTranslationStatus("");
+
+      const nextTranslatedDoc = applyTranslationOutputsToDoc(sourceDoc, state.outputs ?? []);
+      if (translatedDoc && hashDoc(translatedDoc) === hashDoc(nextTranslatedDoc)) {
+        translationState = "success";
+        syncControlState();
+        return;
+      }
+      await applyTranslatedDoc(nextTranslatedDoc, {
+        activateTranslated: true,
+        statusMessage: "已恢复后台翻译结果"
+      });
+      return;
+    }
+
+    translationJobId = "";
+    translationState = translatedDoc ? "success" : "error";
+    setTranslationStatus("");
+    syncControlState();
+    if (state.message) {
+      setStatusMessage(state.message, "error");
+    }
+  };
+
   const handleTranslationMessage = (message: TranslationPortServerMessage) => {
+    if (message.type === "translation/state") {
+      void handleBackgroundTranslationState(message.state);
+      return;
+    }
+
     if (!translationJobId || message.jobId !== translationJobId) return;
 
     if (message.type === "translation/progress") {
-      const detail = message.detail ? ` · ${message.detail}` : "";
-      setTranslationStatus(`${message.label}${detail}`);
+      setTranslationStatus(getTranslationProgressMessage(message));
       syncControlState();
       return;
     }
@@ -1341,6 +1430,10 @@ export const initDrawer = () => {
     });
     translationPort.onDisconnect.addListener(() => {
       translationPort = null;
+      if (suppressNextTranslationDisconnect) {
+        suppressNextTranslationDisconnect = false;
+        return;
+      }
       if (translationState === "translating") {
         translationJobId = "";
         translationState = translatedDoc ? "success" : "error";
@@ -1351,6 +1444,11 @@ export const initDrawer = () => {
     });
 
     return translationPort;
+  };
+
+  const syncTranslationStateFromBackground = () => {
+    if (!sourceDoc || !sourceHash) return;
+    ensureTranslationPort().postMessage({ type: "translation/query-state" });
   };
 
   const startTranslation = async () => {
@@ -1549,7 +1647,7 @@ export const initDrawer = () => {
     if (!drawer || closing) return;
 
     closing = true;
-    cancelActiveTranslation(false);
+    suppressNextTranslationDisconnect = Boolean(translationPort);
     translationPort?.disconnect();
     translationPort = null;
     activeThemeMenu = null;
@@ -1796,6 +1894,7 @@ export const initDrawer = () => {
 
     void (async () => {
       await refreshSource({ announce: false, activateCachedTranslation: false });
+      syncTranslationStateFromBackground();
       syncControlState();
     })();
   };

@@ -46,9 +46,27 @@ export type TranslationJobRequest = {
 
 export type TranslationPortClientMessage =
   | { type: "translation/start"; payload: TranslationJobRequest }
-  | { type: "translation/cancel"; jobId: string };
+  | { type: "translation/cancel"; jobId: string }
+  | { type: "translation/query-state" };
+
+export type TranslationBackgroundState = {
+  jobId: string;
+  sourceHash: string;
+  status: "translating" | "success" | "error";
+  step?: TranslationStep;
+  label?: string;
+  detail?: string;
+  completed?: number;
+  total?: number;
+  outputs?: TranslationOutput[];
+  message?: string;
+};
 
 export type TranslationPortServerMessage =
+  | {
+      type: "translation/state";
+      state: TranslationBackgroundState | null;
+    }
   | {
       type: "translation/progress";
       jobId: string;
