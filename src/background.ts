@@ -91,7 +91,14 @@ const getTranslationJobState = async (
 ): Promise<TranslationBackgroundState | null> => {
   const activeJob = getTranslationJob(tabId);
   if (activeJob) return activeJob.state;
-  return readPersistedTranslationJobState(tabId);
+
+  const persistedState = await readPersistedTranslationJobState(tabId);
+  if (persistedState?.status === "translating") {
+    await persistTranslationJobState(tabId, null);
+    return null;
+  }
+
+  return persistedState;
 };
 
 const isCurrentTranslationJob = (tabId: number, jobId: string): boolean =>
@@ -270,12 +277,12 @@ const runTranslationJob = async (tabId: number, request: TranslationJobRequest) 
       mode: settings.mode,
       analysisSummary,
       signal: controller.signal,
-      onChunkProgress: (completed, total) => {
+      onChunkProgress: (current, total) => {
         void publishProgress({
           step: "translate",
           label: settings.mode === "normal" ? "步骤 3/4：翻译内容" : "步骤 2/3：翻译内容",
-          detail: `分块 ${completed}/${total}`,
-          completed,
+          detail: `处理中 ${current}/${total}`,
+          completed: current,
           total
         });
       }

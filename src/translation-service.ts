@@ -11,6 +11,23 @@ type AnalysisResult = {
   summary: string;
 };
 
+const OPENAI_REQUEST_TIMEOUT_MS = 90_000;
+const OPENAI_REQUEST_MAX_ATTEMPTS = 2;
+const RETRYABLE_ERROR_PATTERNS = [
+  "timeout",
+  "timed out",
+  "network",
+  "fetch",
+  "connection",
+  "socket",
+  "reset",
+  "429",
+  "500",
+  "502",
+  "503",
+  "504"
+];
+
 const parseJsonPayload = <T>(raw: string): T => {
   const trimmed = raw.trim();
   const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
@@ -21,8 +38,27 @@ const parseJsonPayload = <T>(raw: string): T => {
 const createOpenAIClient = (settings: TranslationSettings) =>
   new OpenAI({
     apiKey: settings.apiKey,
+    maxRetries: 0,
     dangerouslyAllowBrowser: true
   });
+
+const wait = (ms: number): Promise<void> =>
+  new Promise((resolve) => {
+    globalThis.setTimeout(resolve, ms);
+  });
+
+const getErrorMessage = (error: unknown): string => {
+  if (error instanceof Error && error.message.trim()) {
+    return error.message.trim();
+  }
+
+  return String(error || "未知错误");
+};
+
+const isRetryableError = (error: unknown): boolean => {
+  const normalizedMessage = getErrorMessage(error).toLowerCase();
+  return RETRYABLE_ERROR_PATTERNS.some((pattern) => normalizedMessage.includes(pattern));
+};
 
 const renderPromptTemplate = (
   template: string,
@@ -88,23 +124,66 @@ const callResponsesApi = async <T>(params: {
   signal: AbortSignal;
 }): Promise<T> => {
   const client = createOpenAIClient(params.settings);
-  const response = await client.responses.create(
-    {
-      model: params.settings.model,
-      input: params.input,
-      temperature: 0.2
-    },
-    {
-      signal: params.signal
-    }
-  );
 
-  const content = response.output_text?.trim() ?? "";
-  if (!content) {
-    throw new Error("OpenAI 返回了空结果");
+  for (let attempt = 1; attempt <= OPENAI_REQUEST_MAX_ATTEMPTS; attempt += 1) {
+    let timedOut = false;
+    const requestController = new AbortController();
+    const abortFromParent = () => {
+      requestController.abort();
+    };
+
+    if (params.signal.aborted) {
+      requestController.abort();
+    } else {
+      params.signal.addEventListener("abort", abortFromParent, { once: true });
+    }
+
+    const timeoutId = globalThis.setTimeout(() => {
+      timedOut = true;
+      requestController.abort();
+    }, OPENAI_REQUEST_TIMEOUT_MS);
+
+    try {
+      const response = await client.responses.create(
+        {
+          model: params.settings.model,
+          input: params.input,
+          temperature: 0.2
+        },
+        {
+          signal: requestController.signal
+        }
+      );
+
+      const content = response.output_text?.trim() ?? "";
+      if (!content) {
+        throw new Error("OpenAI 返回了空结果");
+      }
+
+      return parseJsonPayload<T>(content);
+    } catch (error) {
+      if (params.signal.aborted) {
+        throw error;
+      }
+
+      const fallbackMessage = timedOut
+        ? `OpenAI 请求超时（>${Math.round(OPENAI_REQUEST_TIMEOUT_MS / 1000)} 秒）`
+        : getErrorMessage(error);
+      const shouldRetry =
+        attempt < OPENAI_REQUEST_MAX_ATTEMPTS && (timedOut || isRetryableError(error));
+
+      if (!shouldRetry) {
+        throw new Error(fallbackMessage);
+      }
+
+      await wait(700 * attempt);
+    } finally {
+      globalThis.clearTimeout(timeoutId);
+      params.signal.removeEventListener("abort", abortFromParent);
+    }
   }
 
-  return parseJsonPayload<T>(content);
+  throw new Error("OpenAI 请求失败");
 };
 
 export const analyzeTranslationSource = async (params: {
@@ -131,13 +210,14 @@ export const translateInputs = async (params: {
   mode: "quick" | "normal";
   analysisSummary?: string;
   signal: AbortSignal;
-  onChunkProgress?: (completed: number, total: number) => void;
+  onChunkProgress?: (current: number, total: number) => void;
 }): Promise<TranslationOutput[]> => {
   const chunks = chunkInputs(params.inputs, params.settings);
   const translated: TranslationOutput[] = [];
 
   for (let index = 0; index < chunks.length; index += 1) {
     const chunk = chunks[index];
+    params.onChunkProgress?.(index + 1, chunks.length);
     const input = renderPromptTemplate(translationPromptTemplate, {
       COMMON_RULES: buildCommonTranslationRules(params.settings),
       ANALYSIS_BLOCK:
@@ -153,14 +233,19 @@ export const translateInputs = async (params: {
       )
     });
 
-    const payload = await callResponsesApi<{ items: TranslationOutput[] }>({
-      settings: params.settings,
-      input,
-      signal: params.signal
-    });
+    let payload: { items: TranslationOutput[] };
+    try {
+      payload = await callResponsesApi<{ items: TranslationOutput[] }>({
+        settings: params.settings,
+        input,
+        signal: params.signal
+      });
+    } catch (error) {
+      const detail = getErrorMessage(error);
+      throw new Error(`分块 ${index + 1}/${chunks.length} 失败：${detail}`);
+    }
 
     translated.push(...(payload.items ?? []));
-    params.onChunkProgress?.(index + 1, chunks.length);
   }
 
   return translated;

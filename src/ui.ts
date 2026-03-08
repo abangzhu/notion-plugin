@@ -39,6 +39,7 @@ const DRAWER_ID = "__notion_wechat_drawer";
 const DRAWER_STYLE_ID = "__notion_wechat_drawer_style";
 const ACCENT = "#10b981";
 const TRANSLATION_CACHE_PREFIX = "translationCache";
+const NOTION_PAGE_ID_PATTERN = /[0-9a-f]{32}|[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}/i;
 
 type ThemePreset = {
   id: string;
@@ -146,6 +147,10 @@ const EYE_CLOSED_ICON =
   '<svg aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M1.2 8c1.48-2.6 3.86-4.2 6.8-4.2 2.94 0 5.32 1.6 6.8 4.2-1.48 2.6-3.86 4.2-6.8 4.2-2.94 0-5.32-1.6-6.8-4.2Z" stroke="#6b7280" stroke-width="1.2" stroke-linejoin="round"/><circle cx="8" cy="8" r="2.1" stroke="#6b7280" stroke-width="1.2"/></svg>';
 const EYE_OPEN_ICON =
   '<svg aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M2.2 2.2l11.6 11.6" stroke="#6b7280" stroke-width="1.2" stroke-linecap="round"/><path d="M4.35 4.35A7.23 7.23 0 0 1 8 3.4c2.94 0 5.32 1.6 6.8 4.2a8.74 8.74 0 0 1-2.08 2.45M6.13 6.13A2.68 2.68 0 0 0 5.9 8c0 1.16.94 2.1 2.1 2.1.67 0 1.26-.31 1.64-.8M11.67 11.67A7.31 7.31 0 0 1 8 12.6c-2.94 0-5.32-1.6-6.8-4.2.63-1.1 1.42-2.01 2.35-2.73" stroke="#6b7280" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+const COPY_ICON =
+  '<svg aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="5" y="3" width="7" height="9" rx="1.6" stroke="#6b7280" stroke-width="1.2"/><path d="M4 5.2H3.6C2.72 5.2 2 5.92 2 6.8v5.6C2 13.28 2.72 14 3.6 14h4.8c.88 0 1.6-.72 1.6-1.6V12" stroke="#6b7280" stroke-width="1.2" stroke-linecap="round"/></svg>';
+const CHECK_ICON =
+  '<svg aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M3.2 8.4 6.4 11.4 12.8 4.8" stroke="#10b981" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 
 const createIconButton = (): HTMLButtonElement => {
   const button = createButton("", "ghost");
@@ -357,18 +362,7 @@ const bindEditableControl = (
           keyboardEvent.key.toLowerCase() === "v";
         if (!isPasteShortcut) return;
 
-        keyboardEvent.preventDefault();
         keyboardEvent.stopPropagation();
-
-        void navigator.clipboard
-          .readText()
-          .then((text) => {
-            if (!text) return;
-            insertTextAtCursor(text);
-          })
-          .catch(() => {
-            // Fall back to the browser default when clipboard access is unavailable.
-          });
       },
       true
     );
@@ -626,7 +620,19 @@ const createDrawer = () => {
   status.style.fontSize = "12px";
   status.style.color = "#6b7280";
   status.style.minHeight = "18px";
+  status.style.flex = "1";
+  status.style.whiteSpace = "pre-wrap";
+  status.style.wordBreak = "break-word";
+  status.style.userSelect = "text";
+  status.style.cursor = "text";
+  status.tabIndex = 0;
   rowBottom.appendChild(status);
+
+  const copyStatusButton = createIconButton();
+  copyStatusButton.innerHTML = COPY_ICON;
+  copyStatusButton.style.display = "none";
+  copyStatusButton.style.flexShrink = "0";
+  rowBottom.appendChild(copyStatusButton);
 
   toolbar.appendChild(rowTop);
   toolbar.appendChild(rowMiddle);
@@ -834,6 +840,7 @@ const createDrawer = () => {
     container,
     previewPage,
     status,
+    copyStatusButton,
     themeButton,
     themeMenu,
     themeWrapper,
@@ -887,6 +894,7 @@ export const initDrawer = () => {
 
   let sourceDoc: Doc | null = null;
   let sourceHash = "";
+  let sourcePageKey = "";
   let originalHtml = "";
   let originalText = "";
   let originalMarkdown = "";
@@ -903,6 +911,7 @@ export const initDrawer = () => {
   let translationJobId = "";
   let translationPort: chrome.runtime.Port | null = null;
   let suppressNextTranslationDisconnect = false;
+  let translationDisconnectRecoveryId = 0;
 
   let currentTheme = THEME_PRESETS[0];
   let currentFont = FONT_PRESETS[0];
@@ -921,6 +930,22 @@ export const initDrawer = () => {
     return "当前语言";
   };
 
+  const getCurrentPageKey = (): string => {
+    const url = new URL(window.location.href);
+    const pageParam = url.searchParams.get("p");
+    const lastPathSegment = url.pathname.split("/").filter(Boolean).at(-1) ?? url.pathname;
+
+    for (const candidate of [pageParam, lastPathSegment]) {
+      if (!candidate) continue;
+      const match = candidate.match(NOTION_PAGE_ID_PATTERN);
+      if (match) {
+        return match[0].replace(/-/g, "").toLowerCase();
+      }
+    }
+
+    return url.pathname;
+  };
+
   const getTranslateDisabledReason = (): string => {
     if (!sourceDoc || !sourceHash) return "未检测到可翻译内容";
     if (translationState === "translating") return "";
@@ -932,6 +957,12 @@ export const initDrawer = () => {
     return "";
   };
 
+  const getVisibleStatusMessage = (): string => {
+    const usingTranslationStatus =
+      translationState === "translating" && translationStatusMessage.trim().length > 0;
+    return usingTranslationStatus ? translationStatusMessage : statusMessage;
+  };
+
   const setStatusTone = (element: HTMLElement, tone: StatusTone) => {
     element.style.color =
       tone === "success" ? "#047857" : tone === "error" ? "#b91c1c" : "#6b7280";
@@ -941,8 +972,14 @@ export const initDrawer = () => {
     if (!drawerRefs) return;
     const usingTranslationStatus =
       translationState === "translating" && translationStatusMessage.trim().length > 0;
-    drawerRefs.status.textContent = usingTranslationStatus ? translationStatusMessage : statusMessage;
+    const visibleStatusMessage = getVisibleStatusMessage();
+    drawerRefs.status.textContent = visibleStatusMessage;
+    drawerRefs.status.title = visibleStatusMessage;
     setStatusTone(drawerRefs.status, usingTranslationStatus ? "info" : statusTone);
+    setButtonDisabled(drawerRefs.copyStatusButton, visibleStatusMessage.trim().length === 0);
+    drawerRefs.copyStatusButton.style.display = visibleStatusMessage.trim().length > 0 ? "inline-flex" : "none";
+    drawerRefs.copyStatusButton.title = visibleStatusMessage ? "复制当前消息" : "";
+    drawerRefs.copyStatusButton.setAttribute("aria-label", visibleStatusMessage ? "复制当前消息" : "");
   };
 
   const setStatusMessage = (message: string, tone: StatusTone = "info") => {
@@ -954,6 +991,86 @@ export const initDrawer = () => {
   const setTranslationStatus = (message: string) => {
     translationStatusMessage = message;
     updateStatus();
+  };
+
+  const wait = (ms: number): Promise<void> =>
+    new Promise((resolve) => {
+      window.setTimeout(resolve, ms);
+    });
+
+  const queryTranslationStateSnapshot = (): Promise<TranslationBackgroundState | null | undefined> =>
+    new Promise((resolve) => {
+      let settled = false;
+      let port: chrome.runtime.Port | null = null;
+
+      const finish = (state?: TranslationBackgroundState | null) => {
+        if (settled) return;
+        settled = true;
+        window.clearTimeout(timeoutId);
+        if (port) {
+          port.onMessage.removeListener(handleMessage);
+          port.onDisconnect.removeListener(handleDisconnect);
+          try {
+            port.disconnect();
+          } catch (error) {
+            // Ignore already-closed ports.
+          }
+        }
+        resolve(state);
+      };
+
+      const handleMessage = (message: unknown) => {
+        const payload = message as TranslationPortServerMessage;
+        if (payload.type !== "translation/state") return;
+        finish(payload.state);
+      };
+
+      const handleDisconnect = () => {
+        finish(undefined);
+      };
+
+      const timeoutId = window.setTimeout(() => {
+        finish(undefined);
+      }, 900);
+
+      try {
+        port = chrome.runtime.connect({ name: TRANSLATION_PORT_NAME });
+      } catch (error) {
+        finish(undefined);
+        return;
+      }
+
+      port.onMessage.addListener(handleMessage);
+      port.onDisconnect.addListener(handleDisconnect);
+
+      try {
+        port.postMessage({ type: "translation/query-state" });
+      } catch (error) {
+        finish(undefined);
+      }
+    });
+
+  const queryTranslationStateSnapshotWithRetry = async (
+    attempts = 3
+  ): Promise<TranslationBackgroundState | null | undefined> => {
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      const state = await queryTranslationStateSnapshot();
+      if (state !== undefined || attempt === attempts - 1) {
+        return state;
+      }
+      await wait(180);
+    }
+
+    return undefined;
+  };
+
+  const formatTranslationDisconnectMessage = (detail?: string): string => {
+    const normalizedDetail = detail?.trim();
+    if (!normalizedDetail) {
+      return "翻译服务连接已断开，请重试";
+    }
+
+    return `翻译服务连接已断开，请重试（${normalizedDetail}）`;
   };
 
   const getTranslationProgressMessage = (message: {
@@ -1296,6 +1413,7 @@ export const initDrawer = () => {
 
   const cancelActiveTranslation = (showMessage = true) => {
     if (translationState !== "translating" || !translationJobId) return;
+    translationDisconnectRecoveryId += 1;
     const port = translationPort ?? ensureTranslationPort();
     port.postMessage({ type: "translation/cancel", jobId: translationJobId });
     translationJobId = "";
@@ -1315,6 +1433,7 @@ export const initDrawer = () => {
 
     if (!state) {
       if (translationState === "translating") {
+        translationDisconnectRecoveryId += 1;
         translationJobId = "";
         translationState = translatedDoc ? "success" : "idle";
         setTranslationStatus("");
@@ -1327,6 +1446,7 @@ export const initDrawer = () => {
       if (state.status === "translating") {
         ensureTranslationPort().postMessage({ type: "translation/cancel", jobId: state.jobId });
       }
+      translationDisconnectRecoveryId += 1;
       translationJobId = "";
       translationState = "idle";
       setTranslationStatus("");
@@ -1339,6 +1459,7 @@ export const initDrawer = () => {
         ensureTranslationPort().postMessage({ type: "translation/cancel", jobId: state.jobId });
       }
       if (translationState === "translating") {
+        translationDisconnectRecoveryId += 1;
         translationJobId = "";
         translationState = translatedDoc ? "success" : "idle";
         setTranslationStatus("");
@@ -1354,6 +1475,8 @@ export const initDrawer = () => {
       syncControlState();
       return;
     }
+
+    translationDisconnectRecoveryId += 1;
 
     if (state.status === "success") {
       translationJobId = "";
@@ -1379,6 +1502,33 @@ export const initDrawer = () => {
     if (state.message) {
       setStatusMessage(state.message, "error");
     }
+  };
+
+  const recoverTranslationAfterDisconnect = async (disconnectDetail?: string) => {
+    const recoveryId = ++translationDisconnectRecoveryId;
+    const disconnectSourceHash = sourceHash;
+
+    setTranslationStatus("翻译连接中断，正在尝试恢复…");
+    syncControlState();
+
+    const state = await queryTranslationStateSnapshotWithRetry();
+    if (recoveryId !== translationDisconnectRecoveryId) return;
+    if (translationState !== "translating" || sourceHash !== disconnectSourceHash) return;
+
+    if (state && state.sourceHash === disconnectSourceHash) {
+      if (state.status === "translating") {
+        ensureTranslationPort();
+      }
+      await handleBackgroundTranslationState(state);
+      return;
+    }
+
+    translationDisconnectRecoveryId += 1;
+    translationJobId = "";
+    translationState = translatedDoc ? "success" : "error";
+    setTranslationStatus("");
+    syncControlState();
+    setStatusMessage(formatTranslationDisconnectMessage(disconnectDetail), "error");
   };
 
   const handleTranslationMessage = (message: TranslationPortServerMessage) => {
@@ -1429,17 +1579,14 @@ export const initDrawer = () => {
       handleTranslationMessage(message as TranslationPortServerMessage);
     });
     translationPort.onDisconnect.addListener(() => {
+      const disconnectDetail = chrome.runtime.lastError?.message ?? "";
       translationPort = null;
       if (suppressNextTranslationDisconnect) {
         suppressNextTranslationDisconnect = false;
         return;
       }
       if (translationState === "translating") {
-        translationJobId = "";
-        translationState = translatedDoc ? "success" : "error";
-        setTranslationStatus("");
-        syncControlState();
-        setStatusMessage("翻译服务连接已断开，请重试", "error");
+        void recoverTranslationAfterDisconnect(disconnectDetail);
       }
     });
 
@@ -1487,6 +1634,7 @@ export const initDrawer = () => {
     }
 
     const port = ensureTranslationPort();
+    translationDisconnectRecoveryId += 1;
     translationState = "translating";
     translationJobId =
       typeof crypto.randomUUID === "function"
@@ -1590,19 +1738,23 @@ export const initDrawer = () => {
 
     const nextSourceDoc = extractDocFromNotion();
     const nextSourceHash = hashDoc(nextSourceDoc);
+    const nextSourcePageKey = getCurrentPageKey();
     const previousSourceHash = sourceHash;
+    const previousSourcePageKey = sourcePageKey;
+    const pageChanged = Boolean(previousSourcePageKey) && previousSourcePageKey !== nextSourcePageKey;
     const sourceChanged = Boolean(previousSourceHash) && previousSourceHash !== nextSourceHash;
     const hadTranslatedContent = Boolean(translatedDoc);
 
-    if (sourceChanged) {
+    if (pageChanged || sourceChanged) {
       cancelActiveTranslation(false);
       clearTranslatedContent();
-      translationState = hadTranslatedContent ? "stale" : "idle";
+      translationState = !pageChanged && hadTranslatedContent ? "stale" : "idle";
       contentMode = "original";
     }
 
     sourceDoc = nextSourceDoc;
     sourceHash = nextSourceHash;
+    sourcePageKey = nextSourcePageKey;
     sourceLanguage = detectDocLanguage(nextSourceDoc);
     rebuildRenderedContent();
 
@@ -1626,6 +1778,15 @@ export const initDrawer = () => {
     );
 
     syncControlState();
+
+    if (pageChanged) {
+      if (restored) {
+        setStatusMessage("已切换页面，已恢复匹配的缓存译文", "success");
+      } else if (hadTranslatedContent || announce) {
+        setStatusMessage("已切换到新页面", "success");
+      }
+      return;
+    }
 
     if (sourceChanged) {
       if (restored) {
@@ -1815,6 +1976,23 @@ export const initDrawer = () => {
 
     drawerRefs.refreshButton.addEventListener("click", () => {
       void refreshSource({ announce: true, activateCachedTranslation: contentMode === "translated" });
+    });
+
+    drawerRefs.copyStatusButton.addEventListener("click", async () => {
+      const message = getVisibleStatusMessage().trim();
+      if (!message) return;
+
+      try {
+        await navigator.clipboard.writeText(message);
+        if (!drawerRefs) return;
+        drawerRefs.copyStatusButton.innerHTML = CHECK_ICON;
+        window.setTimeout(() => {
+          if (!drawerRefs) return;
+          drawerRefs.copyStatusButton.innerHTML = COPY_ICON;
+        }, 1200);
+      } catch (error) {
+        setStatusMessage("复制消息失败，请检查剪贴板权限", "error");
+      }
     });
 
     drawerRefs.copyAllButton.addEventListener("click", async () => {
