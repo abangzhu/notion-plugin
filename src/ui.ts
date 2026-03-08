@@ -34,6 +34,12 @@ import type {
 } from "./translation";
 import type { RenderOptions, ThemeColors, Typography } from "./theme";
 import type { Doc } from "./types";
+import {
+  buildImageMap,
+  extractImageUrls,
+  preloadImages,
+  type ImageMap
+} from "./image-loader";
 
 const DRAWER_ID = "__notion_wechat_drawer";
 const DRAWER_STYLE_ID = "__notion_wechat_drawer_style";
@@ -924,6 +930,9 @@ export const initDrawer = () => {
   let statusTone: StatusTone = "info";
   let translationStatusMessage = "";
 
+  let imageMap: ImageMap = new Map();
+  let imagePreloadAborted = false;
+
   const getLanguageLabel = (language: DetectedLanguage | string): string => {
     if (language === "zh-CN") return "中文";
     if (language === "en") return "English";
@@ -1186,11 +1195,37 @@ export const initDrawer = () => {
     typography: computeTypography()
   });
 
+  const cancelImagePreload = () => {
+    imagePreloadAborted = true;
+  };
+
+  const startImagePreload = (doc: Doc) => {
+    const urls = extractImageUrls(doc);
+    if (urls.length === 0) return;
+
+    imagePreloadAborted = false;
+
+    void preloadImages(urls, (loaded, total) => {
+      if (imagePreloadAborted) return;
+      setStatusMessage(`图片加载中 ${loaded}/${total}`, "info");
+    }).then((results) => {
+      if (imagePreloadAborted) return;
+      imageMap = buildImageMap(results);
+      const failed = results.filter((r) => r.error).length;
+      rebuildRenderedContent();
+      if (failed > 0) {
+        setStatusMessage(`图片加载完成（${failed}/${results.length} 张失败）`, "info");
+      } else {
+        setStatusMessage(`${results.length} 张图片已加载`, "success");
+      }
+    });
+  };
+
   const rebuildRenderedContent = () => {
     const renderOptions = buildRenderOptions();
 
     if (sourceDoc) {
-      originalHtml = renderDocToHtml(sourceDoc, renderOptions);
+      originalHtml = renderDocToHtml(sourceDoc, renderOptions, imageMap);
       originalText = renderDocToText(sourceDoc);
       originalMarkdown = renderDocToMarkdown(sourceDoc);
     } else {
@@ -1200,7 +1235,7 @@ export const initDrawer = () => {
     }
 
     if (translatedDoc) {
-      translatedHtml = renderDocToHtml(translatedDoc, renderOptions);
+      translatedHtml = renderDocToHtml(translatedDoc, renderOptions, imageMap);
       translatedText = renderDocToText(translatedDoc);
       translatedMarkdown = renderDocToMarkdown(translatedDoc);
     } else {
@@ -1748,6 +1783,8 @@ export const initDrawer = () => {
     if (pageChanged || sourceChanged) {
       cancelActiveTranslation(false);
       clearTranslatedContent();
+      cancelImagePreload();
+      imageMap = new Map();
       translationState = !pageChanged && hadTranslatedContent ? "stale" : "idle";
       contentMode = "original";
     }
@@ -1757,6 +1794,7 @@ export const initDrawer = () => {
     sourcePageKey = nextSourcePageKey;
     sourceLanguage = detectDocLanguage(nextSourceDoc);
     rebuildRenderedContent();
+    startImagePreload(nextSourceDoc);
 
     if (sourceLanguage !== "unknown" && sourceLanguage === translationSettings.targetLanguage) {
       clearTranslatedContent();
@@ -1811,6 +1849,8 @@ export const initDrawer = () => {
     suppressNextTranslationDisconnect = Boolean(translationPort);
     translationPort?.disconnect();
     translationPort = null;
+    cancelImagePreload();
+    imageMap = new Map();
     activeThemeMenu = null;
     activeThemeWrapper = null;
 
