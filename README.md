@@ -6,12 +6,12 @@
 
 - 一键复制为公众号格式
 - 一键复制为 Markdown 格式
-- 一键翻译当前 Notion 页面内容
-- 支持 `Quick` / `Normal` 两种翻译模式
+- AI一键翻译当前 Notion 页面内容（支持中英文互译）
+- 支持 `Quick` / `Normal` 两种 AI 翻译模式
 - 支持 `原文 / 译文` 预览切换
 - 支持 `公众号 / Markdown` 两种预览格式切换
 - 翻译完成后，当前预览内容可继续复制为公众号格式或 Markdown
-- 顶部设置面板支持配置 OpenAI API Key、模型、目标语言、目标读者、风格预设、术语表等
+- 顶部设置面板支持配置 OpenAI API Key、ChatGPT 系列模型、目标语言、目标读者、风格预设、术语表等
 - 模型列表来自 [`src/translation-models.json`](./src/translation-models.json)，可自行扩展
 - 翻译提示词模板位于 `src/prompts/`，开发者可直接调整 prompt 文案与翻译约束
 - 支持 5 套主题：`默认主题`、`活力橙`、`海蓝色`、`科技黑`、`魔力红`
