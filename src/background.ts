@@ -8,6 +8,7 @@ import {
   type TranslationPortServerMessage
 } from "./translation";
 
+
 const CONTENT_SCRIPT_FILE = "dist/content.js";
 const TRANSLATION_JOB_STATE_PREFIX = "translationBackgroundJob";
 
@@ -357,4 +358,4 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   translationSubscribers.delete(tabId);
 });
 
-// Image upload removed: images are copied as-is in HTML output.
+// Image loading handled directly in content script via DOM Image + Canvas.

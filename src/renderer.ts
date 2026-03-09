@@ -1,6 +1,7 @@
 import { mergeRenderOptions } from "./theme";
 import type { RenderOptions } from "./theme";
 import type { Block, Doc, Inline, ListBlock, ListItem, TableBlock } from "./types";
+import type { ImageMap } from "./image-loader";
 
 type ReferenceItem = {
   href: string;
@@ -132,11 +133,12 @@ const listItemToHtml = (
   options: RenderOptions,
   depth: number,
   indexMap?: Map<string, number>,
-  textColor?: string
+  textColor?: string,
+  imageMap?: ImageMap
 ): string => {
   const textHtml = inlinesToHtml(item.children, options, indexMap) || "<br/>";
   const nestedHtml =
-    item.nested?.map((nested) => listToHtml(nested, options, depth + 1, indexMap)).join("") ?? "";
+    item.nested?.map((nested) => listToHtml(nested, options, depth + 1, indexMap, imageMap)).join("") ?? "";
   const paragraphStyle = buildBodyParagraphStyle(options, textColor);
   return `<li><p style="${paragraphStyle}"><span leaf="">${textHtml}</span></p>${nestedHtml}</li>`;
 };
@@ -145,7 +147,8 @@ const listToHtml = (
   list: ListBlock,
   options: RenderOptions,
   depth = 0,
-  indexMap?: Map<string, number>
+  indexMap?: Map<string, number>,
+  imageMap?: ImageMap
 ): string => {
   const tag = list.ordered ? "ol" : "ul";
   const orderedStyles = ["decimal", "lower-alpha", "lower-roman", "upper-alpha", "upper-roman"];
@@ -156,7 +159,7 @@ const listToHtml = (
   const isAccentTheme = options.themeId === "red" || options.themeId === "blue" || options.themeId === "sspai";
   const itemTextColor = !list.ordered && isAccentTheme ? options.colors.text : options.colors.text;
   const listItems = list.items
-    .map((item) => listItemToHtml(item, options, depth, indexMap, itemTextColor))
+    .map((item) => listItemToHtml(item, options, depth, indexMap, itemTextColor, imageMap))
     .join("");
   return `<${tag} style="list-style-type: ${listStyleType};padding-left:1.5em;list-style-position:outside;" class="list-paddingleft-1">${listItems}</${tag}>`;
 };
@@ -190,7 +193,8 @@ const tableToHtml = (
 const blockToHtml = (
   block: Block,
   options: RenderOptions,
-  indexMap?: Map<string, number>
+  indexMap?: Map<string, number>,
+  imageMap?: ImageMap
 ): string => {
   const baseSize = Number.parseFloat(options.typography.bodySize) || 16;
   const h1Size = Math.round(baseSize * 1.6);
@@ -326,8 +330,10 @@ const blockToHtml = (
       return isAccentTheme || isBlack || isSspai
         ? `<hr style="border-style:solid;border-width:1px 0 0;border-color:${options.colors.divider};transform-origin:0 0;transform:scale(1,${isSspai ? "1" : "0.5"});margin:${isSspai ? "15px 0" : "16px 0"};" />`
         : `<hr style="border:none;border-top:1px solid ${options.colors.divider};margin:16px 0;" />`;
-    case "image":
-      return `<p style="text-align:center;margin:16px 0;"><img src="${escapeHtml(block.src)}" alt="${escapeHtml(block.alt ?? "")}" style="max-width:100%;border-radius:6px;" /></p>`;
+    case "image": {
+      const imgSrc = imageMap?.get(block.src) ?? block.src;
+      return `<p style="text-align:center;margin:16px 0;"><img src="${escapeHtml(imgSrc)}" alt="${escapeHtml(block.alt ?? "")}" style="max-width:100%;border-radius:6px;" /></p>`;
+    }
     case "code":
       return isPineapple
         ? `<pre style="margin:20px 10px;display:block;font-size:${options.typography.bodySize};padding:10px;color:#333;position:relative;background-color:#fafafa;border:1px solid #f0f0f0;border-radius:5px;white-space:pre;box-shadow:0 2px 10px rgba(0,0,0,0.3);overflow:auto;font-family:${options.fontStack};line-height:1.6;">${escapeHtml(
@@ -335,7 +341,7 @@ const blockToHtml = (
           )}</pre>`
         : `<pre style="font-family:Menlo, Monaco, Consolas, monospace;background:${options.colors.codeBg};padding:12px;overflow-x:auto;border-radius:6px;font-size:13px;line-height:1.6;">${escapeHtml(block.code)}</pre>`;
     case "list":
-      return listToHtml(block, options, 0, indexMap);
+      return listToHtml(block, options, 0, indexMap, imageMap);
     case "table":
       return tableToHtml(block, options, indexMap);
     default:
@@ -364,10 +370,14 @@ const renderReferencesSection = (
   return `${headingHtml}${itemHtml}`;
 };
 
-export const renderDocToHtml = (doc: Doc, overrides?: Partial<RenderOptions>): string => {
+export const renderDocToHtml = (
+  doc: Doc,
+  overrides?: Partial<RenderOptions>,
+  imageMap?: ImageMap
+): string => {
   const options = mergeRenderOptions(overrides);
   const { items, indexMap } = collectReferences(doc);
-  const bodyHtml = doc.blocks.map((block) => blockToHtml(block, options, indexMap)).join("");
+  const bodyHtml = doc.blocks.map((block) => blockToHtml(block, options, indexMap, imageMap)).join("");
   const referencesHtml = renderReferencesSection(items, options, indexMap);
   return `${bodyHtml}${referencesHtml}`;
 };
