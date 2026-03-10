@@ -35,12 +35,12 @@
 - List（有序/无序）
 - Heading（H1/H2/H3）
 - Image
-- Code
+- Code（支持语言检测、macOS 窗口装饰、Notion 原生代码块识别）
 - Quote
 - Callout
 - Divider
-- Table
-- Paragraph / Link / Bold / Italic / Inline Code
+- Table（支持表头检测）
+- Paragraph / Link / Bold / Italic / Strikethrough / Underline / Highlight / Inline Code
 
 ## 翻译能力
 
@@ -51,6 +51,7 @@
 - 支持风格预设选择：`叙事感 / 正式 / 技术 / 直译 / 学术 / 商业 / 幽默 / 口语化 / 优雅`
 - 支持术语表、保留术语、额外说明
 - 支持会话级译文缓存，同一原文与设置组合可直接恢复
+- 翻译失败时显示分类错误提示（API Key 无效、配额超限、超时等），并提供重试按钮
 
 ## 翻译设置
 

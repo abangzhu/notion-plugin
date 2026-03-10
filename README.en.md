@@ -35,12 +35,12 @@ When the drawer opens, the extension automatically preloads all images on the pa
 - List (ordered / unordered)
 - Heading (H1 / H2 / H3)
 - Image
-- Code
+- Code (language detection, macOS window decoration, Notion native code block support)
 - Quote
 - Callout
 - Divider
-- Table
-- Paragraph / Link / Bold / Italic / Inline Code
+- Table (header row detection)
+- Paragraph / Link / Bold / Italic / Strikethrough / Underline / Highlight / Inline Code
 
 ## AI Translation
 
@@ -51,6 +51,7 @@ When the drawer opens, the extension automatically preloads all images on the pa
 - Style presets: `Narrative / Formal / Technical / Literal / Academic / Business / Humorous / Conversational / Elegant`
 - Custom glossary, preserved terms, and extra instructions
 - Session-level translation cache — identical source + settings combinations are instantly restored
+- Categorized error messages on translation failure (invalid API key, rate limit, timeout, etc.) with a retry button
 
 ## Translation Settings
 

@@ -59,6 +59,7 @@ export type TableBlock = {
 
 export type TableRow = {
   cells: TableCell[];
+  isHeader?: boolean;
 };
 
 export type TableCell = {
@@ -80,5 +81,8 @@ export type Inline =
   | { type: "text"; content: string; color?: "accent" }
   | { type: "bold"; content: string; color?: "accent" }
   | { type: "italic"; content: string; color?: "accent" }
+  | { type: "strikethrough"; content: string; color?: "accent" }
+  | { type: "underline"; content: string; color?: "accent" }
+  | { type: "highlight"; content: string; highlightColor: string }
   | { type: "code"; content: string }
   | { type: "link"; content: string; href: string };

@@ -36,6 +36,27 @@ const hasAccentColor = (node: Node): boolean => {
   return isAccentColor(color);
 };
 
+const extractHighlightColor = (el: HTMLElement): string | null => {
+  const bg = getComputedStyle(el).backgroundColor ?? "";
+  if (!bg || bg === "transparent" || bg === "rgba(0, 0, 0, 0)") return null;
+  const rgb = parseRgb(bg);
+  if (!rgb) return null;
+  if (rgb.r >= 250 && rgb.g >= 250 && rgb.b >= 250) return null;
+  return bg;
+};
+
+const isStrikethroughEl = (el: HTMLElement): boolean => {
+  const tag = el.tagName;
+  if (tag === "S" || tag === "DEL" || tag === "STRIKE") return true;
+  return (getComputedStyle(el).textDecorationLine ?? "").includes("line-through");
+};
+
+const isUnderlineEl = (el: HTMLElement): boolean => {
+  if (el.tagName === "A") return false;
+  if (el.tagName === "U") return true;
+  return (getComputedStyle(el).textDecorationLine ?? "").includes("underline");
+};
+
 const isBoldEl = (el: HTMLElement): boolean => {
   const weight = parseInt(getComputedStyle(el).fontWeight || "0", 10);
   return el.tagName === "STRONG" || weight >= 600;
@@ -72,6 +93,24 @@ const extractInlinesFromNode = (node: Node): Inline[] => {
     return text ? [{ type: "code", content: text }] : [];
   }
 
+  const highlightColor = extractHighlightColor(node);
+  if (highlightColor) {
+    const text = node.textContent ?? "";
+    return text ? [{ type: "highlight", content: text, highlightColor }] : [];
+  }
+
+  if (isStrikethroughEl(node)) {
+    const text = node.textContent ?? "";
+    const accent = hasAccentColor(node);
+    return text ? [{ type: "strikethrough", content: text, ...(accent ? { color: "accent" } : {}) }] : [];
+  }
+
+  if (isUnderlineEl(node)) {
+    const text = node.textContent ?? "";
+    const accent = hasAccentColor(node);
+    return text ? [{ type: "underline", content: text, ...(accent ? { color: "accent" } : {}) }] : [];
+  }
+
   if (isBoldEl(node)) {
     const text = node.textContent ?? "";
     const accent = hasAccentColor(node);
@@ -97,6 +136,47 @@ const extractInlinesFromNodes = (nodes: Node[]): Inline[] => {
     inlines.push(...extractInlinesFromNode(node));
   });
   return inlines;
+};
+
+const LANGUAGE_ALIASES: Record<string, string> = {
+  js: "javascript",
+  ts: "typescript",
+  py: "python",
+  rb: "ruby",
+  sh: "bash",
+  shell: "bash",
+  yml: "yaml",
+  md: "markdown",
+  objc: "objective-c",
+  cs: "csharp",
+  "c++": "cpp"
+};
+
+const normalizeLanguageName = (raw: string): string => {
+  const trimmed = raw.trim().toLowerCase();
+  return LANGUAGE_ALIASES[trimmed] ?? trimmed;
+};
+
+const detectCodeLanguage = (preEl: HTMLElement, blockEl: HTMLElement): string | undefined => {
+  const dataLang = preEl.getAttribute("data-language");
+  if (dataLang?.trim()) return normalizeLanguageName(dataLang);
+
+  const codeEl = preEl.querySelector("code");
+  if (codeEl) {
+    const classNames = codeEl.className?.toString() ?? "";
+    const langMatch = classNames.match(/(?:language|lang|hljs)-(\S+)/i);
+    if (langMatch?.[1]) return normalizeLanguageName(langMatch[1]);
+  }
+
+  const langButton = blockEl.querySelector<HTMLElement>(
+    '[class*="notion-code-block"] [role="button"], [class*="code-block"] [role="button"]'
+  );
+  const langText = langButton?.textContent?.trim();
+  if (langText && langText.length < 30 && /^[a-zA-Z][a-zA-Z0-9#+\-. ]*$/.test(langText)) {
+    return normalizeLanguageName(langText);
+  }
+
+  return undefined;
 };
 
 const CALLOUT_SELECTOR = '[class*="notion-callout"], [data-block-type="callout"]';
@@ -225,14 +305,44 @@ const mergeAdjacentLists = (blocks: Block[]): Block[] => {
   return merged;
 };
 
+const mergeAdjacentCodeBlocks = (blocks: Block[]): Block[] => {
+  const merged: Block[] = [];
+
+  blocks.forEach((block) => {
+    if (block.type !== "code") {
+      merged.push(block);
+      return;
+    }
+
+    const prev = merged[merged.length - 1];
+    if (prev && prev.type === "code") {
+      merged[merged.length - 1] = {
+        ...prev,
+        code: prev.code + "\n" + block.code,
+        language: prev.language ?? block.language,
+      };
+      return;
+    }
+
+    merged.push(block);
+  });
+
+  return merged;
+};
+
 const extractBlock = (blockEl: HTMLElement): Block | null => {
   const tableEl = blockEl.querySelector("table");
   if (tableEl) {
-    const rows: TableRow[] = Array.from(tableEl.querySelectorAll("tr")).map((row) => {
-      const cells = Array.from(row.querySelectorAll("td, th")).map((cell) => ({
+    const trElements = Array.from(tableEl.querySelectorAll("tr"));
+    const rows: TableRow[] = trElements.map((row, rowIndex) => {
+      const cellElements = Array.from(row.querySelectorAll("td, th"));
+      const cells = cellElements.map((cell) => ({
         children: extractInlinesFromNodes(Array.from(cell.childNodes))
       }));
-      return { cells };
+      const inThead = row.closest("thead") !== null;
+      const allTh = cellElements.length > 0 && cellElements.every((c) => c.tagName === "TH");
+      const isHeader = inThead || (rowIndex === 0 && allTh);
+      return { cells, ...(isHeader ? { isHeader: true } : {}) };
     });
     const hasContent = rows.some((row) => row.cells.some((cell) => cell.children.length > 0));
     if (hasContent) {
@@ -253,10 +363,28 @@ const extractBlock = (blockEl: HTMLElement): Block | null => {
 
   const codeEl = blockEl.querySelector("pre");
   if (codeEl) {
+    const language = detectCodeLanguage(codeEl, blockEl);
     return {
       type: "code",
-      code: codeEl.textContent ?? ""
+      code: codeEl.textContent ?? "",
+      ...(language ? { language } : {})
     };
+  }
+
+  // Notion code blocks: no <pre>, uses class "notion-code-block"
+  if (blockEl.classList.contains("notion-code-block")) {
+    const contentEl = blockEl.querySelector<HTMLElement>(
+      '[data-content-editable-leaf="true"]'
+    );
+    if (contentEl) {
+      const language = detectCodeLanguage(contentEl, blockEl);
+      const code = (contentEl.textContent ?? "").replace(/\n+$/, "");
+      return {
+        type: "code",
+        code,
+        ...(language ? { language } : {}),
+      };
+    }
   }
 
   const quoteEl = blockEl.querySelector("blockquote");
@@ -310,7 +438,7 @@ export const extractDocFromNotion = (): Doc => {
     document.body;
 
   const blocks = getBlockElements(root).map(extractBlock).filter((block): block is Block => Boolean(block));
-  const mergedBlocks = mergeAdjacentLists(blocks);
+  const mergedBlocks = mergeAdjacentCodeBlocks(mergeAdjacentLists(blocks));
 
   return {
     blocks: mergedBlocks

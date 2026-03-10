@@ -60,6 +60,48 @@ const isRetryableError = (error: unknown): boolean => {
   return RETRYABLE_ERROR_PATTERNS.some((pattern) => normalizedMessage.includes(pattern));
 };
 
+type TranslationErrorCategory =
+  | "auth"
+  | "rate_limit"
+  | "server_error"
+  | "timeout"
+  | "network"
+  | "invalid_model"
+  | "unknown";
+
+const classifyTranslationError = (error: unknown): TranslationErrorCategory => {
+  const message = getErrorMessage(error).toLowerCase();
+  if (message.includes("401") || message.includes("unauthorized") || message.includes("invalid api key")) return "auth";
+  if (message.includes("429") || message.includes("rate limit") || message.includes("rate_limit")) return "rate_limit";
+  if (/\b(500|502|503)\b/.test(message)) return "server_error";
+  if (message.includes("timeout") || message.includes("timed out")) return "timeout";
+  if (message.includes("network") || message.includes("fetch") || message.includes("connection")) return "network";
+  if (message.includes("model") && (message.includes("not found") || message.includes("not exist"))) return "invalid_model";
+  return "unknown";
+};
+
+const formatUserFriendlyError = (error: unknown, modelName?: string): string => {
+  const category = classifyTranslationError(error);
+  const modelSuffix = modelName ? `（模型: ${modelName}）` : "";
+
+  switch (category) {
+    case "auth":
+      return `翻译失败：API Key 无效或已过期${modelSuffix}。请在设置中检查。`;
+    case "rate_limit":
+      return "请求超出配额限制，请稍后重试或升级 OpenAI 账户。";
+    case "server_error":
+      return "OpenAI 服务器错误，这通常是临时问题，请稍后重试。";
+    case "timeout":
+      return "请求超时（>90秒），文档可能太长，请尝试减少内容。";
+    case "network":
+      return "网络连接失败，请检查网络后重试。";
+    case "invalid_model":
+      return `模型不可用${modelSuffix}，请在设置中选择其他模型。`;
+    default:
+      return `${getErrorMessage(error)}${modelSuffix}`;
+  }
+};
+
 const renderPromptTemplate = (
   template: string,
   variables: Record<string, string>
@@ -166,14 +208,16 @@ const callResponsesApi = async <T>(params: {
         throw error;
       }
 
-      const fallbackMessage = timedOut
-        ? `OpenAI 请求超时（>${Math.round(OPENAI_REQUEST_TIMEOUT_MS / 1000)} 秒）`
-        : getErrorMessage(error);
       const shouldRetry =
         attempt < OPENAI_REQUEST_MAX_ATTEMPTS && (timedOut || isRetryableError(error));
 
       if (!shouldRetry) {
-        throw new Error(fallbackMessage);
+        throw new Error(
+          formatUserFriendlyError(
+            timedOut ? new Error("timeout") : error,
+            params.settings.model
+          )
+        );
       }
 
       await wait(700 * attempt);

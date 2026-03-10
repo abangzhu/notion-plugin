@@ -16,6 +16,13 @@ const escapeHtml = (input: string): string =>
     .replace(/\"/g, "&quot;")
     .replace(/'/g, "&#39;");
 
+const sanitizeCssColor = (value: string): string => {
+  const trimmed = value.trim();
+  if (/^#[0-9a-fA-F]{3,8}$/.test(trimmed)) return trimmed;
+  if (/^rgba?\(\s*\d+\s*,\s*\d+\s*,\s*\d+\s*(,\s*[\d.]+\s*)?\)$/i.test(trimmed)) return trimmed;
+  return "yellow";
+};
+
 const normalizeHref = (href: string): string => href.trim();
 
 const collectReferencesFromInlines = (
@@ -105,6 +112,12 @@ const inlineToHtml = (
       return `<em style="font-style:italic;${inlineAccent ? `color:${options.colors.link};` : ""}">${escapeHtml(
         inline.content
       )}</em>`;
+    case "strikethrough":
+      return `<del style="text-decoration:line-through;${inlineAccent ? `color:${options.colors.link};` : ""}">${escapeHtml(inline.content)}</del>`;
+    case "underline":
+      return `<span style="text-decoration:underline;${inlineAccent ? `color:${options.colors.link};` : ""}">${escapeHtml(inline.content)}</span>`;
+    case "highlight":
+      return `<mark style="background:${sanitizeCssColor(inline.highlightColor)};padding:2px 0;">${escapeHtml(inline.content)}</mark>`;
     case "code":
       return `<code style="font-family:Menlo, Monaco, Consolas, monospace;background:${options.colors.inlineCodeBg};padding:2px 4px;border-radius:4px;font-size:0.95em;">${escapeHtml(inline.content)}</code>`;
     case "link":
@@ -174,13 +187,17 @@ const tableToHtml = (
   const widthPercent = Math.floor(100 / columnCount);
   const tbody = rows
     .map((row) => {
+      const isHeader = row.isHeader === true;
+      const cellTag = isHeader ? "th" : "td";
+      const headerBg = isHeader ? "background:#f5f5f5;" : "";
+      const headerWeight = isHeader ? "font-weight:700;" : "";
       const cells = row.cells
         .map((cell) => {
-          return `<td style="word-break:break-all;font-family:${options.fontStack};font-size:${options.typography.bodySize};vertical-align:top;width:${widthPercent}%;border:1px solid ${options.colors.divider};padding:6px 8px;${options.typography.letterSpacing ? `letter-spacing:${options.typography.letterSpacing};` : ""}">${inlinesToHtml(
+          return `<${cellTag} style="word-break:break-all;font-family:${options.fontStack};font-size:${options.typography.bodySize};vertical-align:top;width:${widthPercent}%;border:1px solid ${options.colors.divider};padding:6px 8px;${headerBg}${headerWeight}${options.typography.letterSpacing ? `letter-spacing:${options.typography.letterSpacing};` : ""}">${inlinesToHtml(
             cell.children,
             options,
             indexMap
-          )}</td>`;
+          )}</${cellTag}>`;
         })
         .join("");
       return `<tr style="font-size:${options.typography.bodySize};">${cells}</tr>`;
@@ -334,12 +351,15 @@ const blockToHtml = (
       const imgSrc = imageMap?.get(block.src) ?? block.src;
       return `<p style="text-align:center;margin:16px 0;"><img src="${escapeHtml(imgSrc)}" alt="${escapeHtml(block.alt ?? "")}" style="max-width:100%;border-radius:6px;" /></p>`;
     }
-    case "code":
-      return isPineapple
-        ? `<pre style="margin:20px 10px;display:block;font-size:${options.typography.bodySize};padding:10px;color:#333;position:relative;background-color:#fafafa;border:1px solid #f0f0f0;border-radius:5px;white-space:pre;box-shadow:0 2px 10px rgba(0,0,0,0.3);overflow:auto;font-family:${options.fontStack};line-height:1.6;">${escapeHtml(
-            block.code
-          )}</pre>`
-        : `<pre style="font-family:Menlo, Monaco, Consolas, monospace;background:${options.colors.codeBg};padding:12px;overflow-x:auto;border-radius:6px;font-size:13px;line-height:1.6;">${escapeHtml(block.code)}</pre>`;
+    case "code": {
+      const langLabel = block.language ?? "";
+      const macDots = `<span style="display:flex;padding:10px 14px 0px;"><svg xmlns="http://www.w3.org/2000/svg" version="1.1" x="0px" y="0px" width="45px" height="13px" viewBox="0 0 450 130" role="img" aria-label="code-window"><ellipse cx="50" cy="65" rx="50" ry="52" stroke="rgb(220,60,54)" stroke-width="2" fill="rgb(237,108,96)"></ellipse><ellipse cx="225" cy="65" rx="50" ry="52" stroke="rgb(218,151,33)" stroke-width="2" fill="rgb(247,193,81)"></ellipse><ellipse cx="400" cy="65" rx="50" ry="52" stroke="rgb(27,161,37)" stroke-width="2" fill="rgb(100,200,86)"></ellipse></svg></span>`;
+      const langAttr = langLabel ? ` data-language-pending="${escapeHtml(langLabel)}"` : "";
+      if (isPineapple) {
+        return `<pre style="color:#333;background:#fafafa;font-size:90%;overflow-x:auto;border-radius:8px;line-height:1.5;margin:10px 8px;padding:0px !important;border:1px solid #f0f0f0;box-shadow:0 2px 10px rgba(0,0,0,0.3);">${macDots}<code${langAttr} style="font-size:90%;border-radius:4px;display:-webkit-box;padding:0.5em 1em 1em;overflow-x:auto;text-indent:0px;color:inherit;background:none;white-space:pre;margin:0px;font-family:Menlo, Monaco, Consolas, monospace;">${escapeHtml(block.code)}</code></pre>`;
+      }
+      return `<pre style="color:rgb(201,209,217);background:rgb(13,17,23);font-size:90%;overflow-x:auto;border-radius:8px;line-height:1.5;margin:10px 8px;padding:0px !important;">${macDots}<code${langAttr} style="font-size:90%;border-radius:4px;display:-webkit-box;padding:0.5em 1em 1em;overflow-x:auto;text-indent:0px;color:inherit;background:none;white-space:pre;margin:0px;font-family:Menlo, Monaco, Consolas, monospace;">${escapeHtml(block.code)}</code></pre>`;
+    }
     case "list":
       return listToHtml(block, options, 0, indexMap, imageMap);
     case "table":
@@ -425,6 +445,12 @@ const inlineToMarkdown = (inline: Inline): string => {
       return `**${escapeMarkdownText(inline.content)}**`;
     case "italic":
       return `*${escapeMarkdownText(inline.content)}*`;
+    case "strikethrough":
+      return `~~${escapeMarkdownText(inline.content)}~~`;
+    case "underline":
+      return `<u>${escapeMarkdownText(inline.content)}</u>`;
+    case "highlight":
+      return `<mark>${escapeMarkdownText(inline.content)}</mark>`;
     case "code":
       return `\`${inline.content.replace(/`/g, "\\`")}\``;
     case "link":
@@ -459,8 +485,19 @@ const tableToMarkdown = (table: TableBlock): string => {
       inlinesToMarkdown(cells[idx]?.children ?? []).replace(/\n/g, " ")
     );
 
-  const header = normalizeRow(table.rows[0].cells);
+  const headerRowIndex = table.rows.findIndex((row) => row.isHeader === true);
   const divider = Array.from({ length: columnCount }, () => "---");
+
+  if (headerRowIndex >= 0) {
+    const header = normalizeRow(table.rows[headerRowIndex].cells);
+    const body = table.rows
+      .filter((_, idx) => idx !== headerRowIndex)
+      .map((row) => normalizeRow(row.cells));
+    const rows = [header, divider, ...body];
+    return rows.map((cols) => `| ${cols.join(" | ")} |`).join("\n");
+  }
+
+  const header = normalizeRow(table.rows[0].cells);
   const body = table.rows.slice(1).map((row) => normalizeRow(row.cells));
   const rows = [header, divider, ...body];
   return rows.map((cols) => `| ${cols.join(" | ")} |`).join("\n");
@@ -531,7 +568,8 @@ export const renderDocToMarkdown = (doc: Doc): string => {
           return `![${escapeMarkdownText(block.alt ?? "image")}](${block.src})`;
         case "code": {
           const fence = block.code.includes("```") ? "````" : "```";
-          return `${fence}\n${block.code}\n${fence}`;
+          const lang = block.language ?? "";
+          return `${fence}${lang}\n${block.code}\n${fence}`;
         }
         case "list":
           return listToMarkdown(block);

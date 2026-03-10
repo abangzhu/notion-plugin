@@ -122,6 +122,12 @@ const serializeInline = (inline: Inline): string => {
       return `<bold${inline.color === "accent" ? ' accent="1"' : ""}>${escapeXmlText(inline.content)}</bold>`;
     case "italic":
       return `<italic${inline.color === "accent" ? ' accent="1"' : ""}>${escapeXmlText(inline.content)}</italic>`;
+    case "strikethrough":
+      return `<strikethrough${inline.color === "accent" ? ' accent="1"' : ""}>${escapeXmlText(inline.content)}</strikethrough>`;
+    case "underline":
+      return `<underline${inline.color === "accent" ? ' accent="1"' : ""}>${escapeXmlText(inline.content)}</underline>`;
+    case "highlight":
+      return `<highlight color="${escapeXmlAttr(inline.highlightColor)}">${escapeXmlText(inline.content)}</highlight>`;
     case "code":
       return `<code>${escapeXmlText(inline.content)}</code>`;
     case "link":
@@ -153,6 +159,12 @@ const parseInlineNode = (node: ChildNode): Inline[] => {
       return content ? [{ type: "bold", content, ...(accent ? { color: "accent" } : {}) }] : [];
     case "italic":
       return content ? [{ type: "italic", content, ...(accent ? { color: "accent" } : {}) }] : [];
+    case "strikethrough":
+      return content ? [{ type: "strikethrough", content, ...(accent ? { color: "accent" } : {}) }] : [];
+    case "underline":
+      return content ? [{ type: "underline", content, ...(accent ? { color: "accent" } : {}) }] : [];
+    case "highlight":
+      return content ? [{ type: "highlight", content, highlightColor: element.getAttribute("color") ?? "" }] : [];
     case "code":
       return content ? [{ type: "code", content }] : [];
     case "link":

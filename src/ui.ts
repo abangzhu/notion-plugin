@@ -634,6 +634,21 @@ const createDrawer = () => {
   status.tabIndex = 0;
   rowBottom.appendChild(status);
 
+  const retryButton = document.createElement("button");
+  retryButton.type = "button";
+  retryButton.textContent = "重试";
+  retryButton.style.border = `1px solid ${ACCENT}`;
+  retryButton.style.background = ACCENT;
+  retryButton.style.color = "#fff";
+  retryButton.style.borderRadius = "8px";
+  retryButton.style.padding = "4px 10px";
+  retryButton.style.fontSize = "12px";
+  retryButton.style.fontWeight = "600";
+  retryButton.style.cursor = "pointer";
+  retryButton.style.display = "none";
+  retryButton.style.flexShrink = "0";
+  rowBottom.appendChild(retryButton);
+
   const copyStatusButton = createIconButton();
   copyStatusButton.innerHTML = COPY_ICON;
   copyStatusButton.style.display = "none";
@@ -846,6 +861,7 @@ const createDrawer = () => {
     container,
     previewPage,
     status,
+    retryButton,
     copyStatusButton,
     themeButton,
     themeMenu,
@@ -1379,6 +1395,8 @@ export const initDrawer = () => {
           : "pointer";
     drawerRefs.translateButton.disabled =
       translationState !== "translating" && translateDisabled;
+
+    drawerRefs.retryButton.style.display = translationState === "error" ? "inline-block" : "none";
 
     const hasActiveContent =
       getCurrentHtml().trim().length > 0 || getCurrentMarkdown().trim().length > 0;
@@ -1963,6 +1981,11 @@ export const initDrawer = () => {
     });
 
     drawerRefs.translateButton.addEventListener("click", () => {
+      void startTranslation();
+    });
+
+    bindClickableControl(drawerRefs.retryButton);
+    drawerRefs.retryButton.addEventListener("click", () => {
       void startTranslation();
     });
 

@@ -307,7 +307,9 @@ const runTranslationJob = async (tabId: number, request: TranslationJobRequest) 
     }
 
     await publishError(
-      error instanceof Error ? error.message : "翻译失败，请检查模型配置和网络状态"
+      error instanceof Error
+        ? error.message
+        : `翻译失败 (模型: ${request.settings.model})：请检查模型配置和网络状态`
     );
   }
 };
