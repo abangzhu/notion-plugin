@@ -157,6 +157,9 @@ const normalizeLanguageName = (raw: string): string => {
   return LANGUAGE_ALIASES[trimmed] ?? trimmed;
 };
 
+const stripInvisibleChars = (text: string): string =>
+  text.replace(/[\u200B\u200C\u200D\uFEFF]/g, "");
+
 const detectCodeLanguage = (preEl: HTMLElement, blockEl: HTMLElement): string | undefined => {
   const dataLang = preEl.getAttribute("data-language");
   if (dataLang?.trim()) return normalizeLanguageName(dataLang);
@@ -174,6 +177,26 @@ const detectCodeLanguage = (preEl: HTMLElement, blockEl: HTMLElement): string | 
   const langText = langButton?.textContent?.trim();
   if (langText && langText.length < 30 && /^[a-zA-Z][a-zA-Z0-9#+\-. ]*$/.test(langText)) {
     return normalizeLanguageName(langText);
+  }
+
+  // Method 4: search for data-language attribute on any descendant of blockEl
+  const langAttrEl = blockEl.querySelector<HTMLElement>("[data-language]");
+  if (langAttrEl) {
+    const lang = langAttrEl.getAttribute("data-language")?.trim();
+    if (lang) return normalizeLanguageName(lang);
+  }
+
+  // Method 5: look for language label text near the figure element
+  const figureEl = blockEl.querySelector("[role=\"figure\"]");
+  if (figureEl) {
+    const siblings = figureEl.parentElement?.children ?? [];
+    for (const sibling of Array.from(siblings)) {
+      if (sibling === figureEl) continue;
+      const text = (sibling as HTMLElement).textContent?.trim() ?? "";
+      if (text && text.length < 30 && /^[a-zA-Z][a-zA-Z0-9#+\-. ]*$/.test(text)) {
+        return normalizeLanguageName(text);
+      }
+    }
   }
 
   return undefined;
@@ -366,7 +389,7 @@ const extractBlock = (blockEl: HTMLElement): Block | null => {
     const language = detectCodeLanguage(codeEl, blockEl);
     return {
       type: "code",
-      code: codeEl.textContent ?? "",
+      code: stripInvisibleChars(codeEl.textContent ?? ""),
       ...(language ? { language } : {})
     };
   }
@@ -378,7 +401,7 @@ const extractBlock = (blockEl: HTMLElement): Block | null => {
     );
     if (contentEl) {
       const language = detectCodeLanguage(contentEl, blockEl);
-      const code = (contentEl.textContent ?? "").replace(/\n+$/, "");
+      const code = stripInvisibleChars(contentEl.textContent ?? "").replace(/\n+$/, "");
       return {
         type: "code",
         code,

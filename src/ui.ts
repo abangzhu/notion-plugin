@@ -265,6 +265,41 @@ const createField = (
   return wrapper;
 };
 
+const createCollapsibleSection = (
+  title: string,
+  expanded: boolean,
+  fields: HTMLElement[]
+): HTMLElement => {
+  const section = document.createElement("div");
+  section.style.borderTop = "1px solid #f1f5f9";
+
+  const header = document.createElement("div");
+  header.style.cssText =
+    "display:flex;align-items:center;justify-content:space-between;padding:12px 0 8px;cursor:pointer;user-select:none;";
+  const label = document.createElement("span");
+  label.textContent = title;
+  label.style.cssText = "font-size:12px;font-weight:700;color:#374151;";
+  const arrow = document.createElement("span");
+  arrow.textContent = expanded ? "▾" : "▸";
+  arrow.style.cssText = "font-size:11px;color:#9ca3af;transition:transform 0.15s;";
+  header.appendChild(label);
+  header.appendChild(arrow);
+
+  const body = document.createElement("div");
+  body.style.cssText = `display:${expanded ? "flex" : "none"};flex-direction:column;gap:16px;padding-bottom:8px;`;
+  fields.forEach((field) => body.appendChild(field));
+
+  header.addEventListener("click", () => {
+    const isOpen = body.style.display !== "none";
+    body.style.display = isOpen ? "none" : "flex";
+    arrow.textContent = isOpen ? "▸" : "▾";
+  });
+
+  section.appendChild(header);
+  section.appendChild(body);
+  return section;
+};
+
 const createTextInput = (type = "text"): HTMLInputElement => {
   const input = document.createElement("input");
   input.type = type;
@@ -469,8 +504,34 @@ const ensureDrawerStyles = () => {
   from { transform: rotate(0deg); }
   to { transform: rotate(360deg); }
 }
+@keyframes toastIn {
+  from { transform: translateY(20px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+@keyframes toastOut {
+  from { transform: translateY(0); opacity: 1; }
+  to { transform: translateY(20px); opacity: 0; }
+}
 `;
   document.head.appendChild(style);
+};
+
+const showToast = (message: string) => {
+  const existing = document.getElementById("n2w-toast");
+  if (existing) existing.remove();
+
+  const toast = document.createElement("div");
+  toast.id = "n2w-toast";
+  toast.textContent = message;
+  toast.style.cssText =
+    "position:fixed;bottom:32px;left:50%;transform:translateX(-50%);background:#333;color:#fff;padding:8px 20px;border-radius:8px;font-size:13px;z-index:2147483647;pointer-events:none;animation:toastIn 0.25s ease-out;font-family:-apple-system,BlinkMacSystemFont,sans-serif;box-shadow:0 4px 12px rgba(0,0,0,0.2);";
+
+  document.body.appendChild(toast);
+
+  window.setTimeout(() => {
+    toast.style.animation = "toastOut 0.25s ease-in forwards";
+    window.setTimeout(() => toast.remove(), 250);
+  }, 2000);
 };
 
 const createDrawer = () => {
@@ -482,7 +543,7 @@ const createDrawer = () => {
   container.style.top = "0";
   container.style.right = "0";
   container.style.height = "100vh";
-  container.style.width = "686px";
+  container.style.width = "min(686px, 100vw)";
   container.style.zIndex = "2147483647";
   container.style.background = "#f5f5f5";
   container.style.boxShadow = "-4px 0 20px rgba(0,0,0,0.12)";
@@ -791,19 +852,27 @@ const createDrawer = () => {
   apiKeyControl.appendChild(apiKeyInput);
   apiKeyControl.appendChild(apiKeyToggleButton);
 
-  settingsBody.appendChild(createField("API Key", apiKeyControl, "", false));
-  settingsBody.appendChild(
-    createField("模型", modelSelect, "模型列表来自 src/translation-models.json")
-  );
-  settingsBody.appendChild(createField("目标语言", targetLanguageSegment, "", false));
-  settingsBody.appendChild(createField("翻译模式", modeSelect));
-  settingsBody.appendChild(createField("目标读者", audienceSelect));
-  settingsBody.appendChild(createField("风格预设", stylePresetSelect));
-  settingsBody.appendChild(createField("术语表", glossaryInput, "一行一个术语或映射"));
-  settingsBody.appendChild(createField("保留术语", preserveTermsInput, "这些词会被要求保留原文"));
-  settingsBody.appendChild(createField("额外说明", extraInstructionsInput));
-  settingsBody.appendChild(createField("分块阈值", chunkThresholdInput, "超过该字数后启用分块翻译"));
-  settingsBody.appendChild(createField("每块最大单元数", chunkMaxUnitsInput));
+  const basicFields = [
+    createField("API Key", apiKeyControl, "", false),
+    createField("模型", modelSelect, "模型列表来自 src/translation-models.json"),
+    createField("目标语言", targetLanguageSegment, "", false),
+    createField("翻译模式", modeSelect)
+  ];
+  const styleFields = [
+    createField("目标读者", audienceSelect),
+    createField("风格预设", stylePresetSelect),
+    createField("术语表", glossaryInput, "一行一个术语或映射"),
+    createField("保留术语", preserveTermsInput, "这些词会被要求保留原文"),
+    createField("额外说明", extraInstructionsInput)
+  ];
+  const advancedFields = [
+    createField("分块阈值", chunkThresholdInput, "超过该字数后启用分块翻译"),
+    createField("每块最大单元数", chunkMaxUnitsInput)
+  ];
+
+  settingsBody.appendChild(createCollapsibleSection("基础配置", true, basicFields));
+  settingsBody.appendChild(createCollapsibleSection("翻译风格", false, styleFields));
+  settingsBody.appendChild(createCollapsibleSection("高级选项", false, advancedFields));
 
   [
     apiKeyInput,
@@ -2068,10 +2137,9 @@ export const initDrawer = () => {
 
       try {
         await writeClipboard(html, text);
-        setStatusMessage(
-          contentMode === "translated" ? "已复制译文为公众号格式" : "已复制原文为公众号格式",
-          "success"
-        );
+        const msg = contentMode === "translated" ? "已复制译文为公众号格式" : "已复制原文为公众号格式";
+        setStatusMessage(msg, "success");
+        showToast(msg);
       } catch (error) {
         setStatusMessage("复制失败，请重试", "error");
       }
@@ -2086,10 +2154,9 @@ export const initDrawer = () => {
 
       try {
         await navigator.clipboard.writeText(markdown);
-        setStatusMessage(
-          contentMode === "translated" ? "已复制译文为 Markdown" : "已复制原文为 Markdown",
-          "success"
-        );
+        const msg = contentMode === "translated" ? "已复制译文为 Markdown" : "已复制原文为 Markdown";
+        setStatusMessage(msg, "success");
+        showToast(msg);
       } catch (error) {
         setStatusMessage("复制失败，请重试", "error");
       }
@@ -2106,6 +2173,15 @@ export const initDrawer = () => {
 
         if (drawer && !drawer.contains(target)) {
           closeDrawer();
+        }
+      });
+      document.addEventListener("keydown", (event) => {
+        if (event.key === "Escape" && drawer) {
+          if (drawerRefs && drawerRefs.settingsOverlay.style.display === "flex") {
+            closeSettings();
+          } else {
+            closeDrawer();
+          }
         }
       });
     }
