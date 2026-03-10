@@ -160,6 +160,29 @@ const normalizeLanguageName = (raw: string): string => {
 const stripInvisibleChars = (text: string): string =>
   text.replace(/[\u200B\u200C\u200D\uFEFF]/g, "");
 
+const PRISM_CLASS_HINTS: Record<string, string> = {
+  environment: "bash",
+  shebang: "bash",
+  "assign-left": "bash",
+  "file-descriptor": "bash",
+  decorator: "python",
+  "f-string": "python",
+  "triple-quoted-string": "python",
+};
+
+const detectLanguageFromPrismTokens = (containerEl: HTMLElement): string | undefined => {
+  const tokenSpans = containerEl.querySelectorAll<HTMLElement>("span.token");
+  const limit = Math.min(tokenSpans.length, 20);
+  for (let i = 0; i < limit; i++) {
+    const classes = tokenSpans[i].className.split(/\s+/);
+    for (const cls of classes) {
+      const hint = PRISM_CLASS_HINTS[cls];
+      if (hint) return hint;
+    }
+  }
+  return undefined;
+};
+
 const detectCodeLanguage = (preEl: HTMLElement, blockEl: HTMLElement): string | undefined => {
   const dataLang = preEl.getAttribute("data-language");
   if (dataLang?.trim()) return normalizeLanguageName(dataLang);
@@ -198,6 +221,11 @@ const detectCodeLanguage = (preEl: HTMLElement, blockEl: HTMLElement): string | 
       }
     }
   }
+
+  // Method 6: infer language from Notion's Prism token classes
+  const contentEl = blockEl.querySelector<HTMLElement>('[data-content-editable-leaf="true"]') ?? preEl;
+  const prismLang = detectLanguageFromPrismTokens(contentEl);
+  if (prismLang) return prismLang;
 
   return undefined;
 };

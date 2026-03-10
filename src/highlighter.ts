@@ -161,7 +161,7 @@ export const highlightCode = (
       result = hljs.highlight(code, { language: lang });
     } else {
       result = hljs.highlightAuto(code);
-      if (!result.language || (result.relevance ?? 0) < 5) {
+      if (!result.language || (result.relevance ?? 0) < 2) {
         return escapeHtml(code);
       }
     }
