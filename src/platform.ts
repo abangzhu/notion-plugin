@@ -23,14 +23,14 @@ export const detectPlatform = (): Platform => {
   return "unknown";
 };
 
-export const extractDoc = (): Doc => {
+export const extractDoc = async (): Promise<Doc> => {
   const platform = detectPlatform();
 
   switch (platform) {
     case "notion":
       return extractDocFromNotion();
     case "feishu":
-      return extractDocFromFeishu();
+      return await extractDocFromFeishu();
     case "unknown":
       return { blocks: [] };
   }

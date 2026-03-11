@@ -30,6 +30,15 @@ When the drawer opens, the extension automatically preloads all images on the pa
 - Failed images fall back to their original URL with a failure count notification
 - Images are automatically reloaded when switching pages or refreshing
 
+## Feishu Document Support
+
+Supports both Feishu `/docx/` and `/wiki/` page paths with a tiered extraction strategy:
+
+1. **Data extraction** (preferred for `/docx/` pages) — A MAIN world script reads `window.DATA.clientVars.data.block_map` to get the full document structure directly, bypassing virtual scrolling
+2. **Scroll-based accumulation** (fallback for `/wiki/` pages) — Feishu wiki pages use virtual scrolling and don't expose a global data object. The extension automatically scrolls from top to bottom, collecting visible DOM blocks at each step and deduplicating via content hashing to assemble the full document
+
+Both strategies are transparent to the user — the optimal path is chosen automatically when the drawer opens.
+
 ## Supported Content Formats
 
 - List (ordered / unordered)

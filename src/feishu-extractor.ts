@@ -13,6 +13,7 @@ type FeishuBlockData = {
   columns_id?: string[];
   rows_id?: string[];
   cell_set?: Record<string, { block_id: string; merge_info: { row_span: number; col_span: number } }>;
+  header_row?: boolean;
   language?: string;
 };
 type BlockMap = Record<string, { id: string; data: FeishuBlockData }>;
@@ -498,7 +499,7 @@ const parseAttributedText = (blockData: FeishuBlockData): Inline[] => {
   if (!textStr) return [];
 
   const numToAttrib = apool.numToAttrib;
-  // Etherpad changeset format: *N = activate attrib N, |N = deactivate/line-boundary, +X = insert X chars (base36)
+  // Etherpad changeset format: *N = activate attrib N, |N+X = insert X chars containing N newlines, +X = insert X chars (base36)
   const regex = /(\*([0-9a-z]+))|(\|([0-9a-z]+))?\+([0-9a-z]+)/g;
 
   // Track active attributes by name → apool key (so we can resolve the correct value)
@@ -514,12 +515,8 @@ const parseAttributedText = (blockData: FeishuBlockData): Inline[] => {
       const attrib = numToAttrib[key];
       if (attrib) activeAttribs.set(attrib[0], key);
     } else {
-      // |N before + → deactivate attribute N
-      if (match[3] && match[4]) {
-        const key = match[4];
-        const attrib = numToAttrib[key];
-        if (attrib) activeAttribs.delete(attrib[0]);
-      }
+      // |N before +X → line marker (N newlines in this insertion), NOT attribute deactivation
+      // Do nothing — attributes remain active
 
       // +X → consume X characters
       const count = parseBase36(match[5]);
@@ -549,7 +546,7 @@ const parseAttributedText = (blockData: FeishuBlockData): Inline[] => {
           }
         } else if (attr === "inlineCode" && inlineType !== "link") {
           inlineType = "code";
-        } else if (attr === "textHighlight" && inlineType === "text") {
+        } else if (attr === "textHighlight" && inlineType !== "link" && inlineType !== "code") {
           inlineType = "highlight";
           const attribEntry = numToAttrib[poolKey];
           highlightColor = attribEntry?.[1] ?? "#fff3b0";
@@ -641,6 +638,7 @@ const extractBlockFromData = (
     const rowsId = data.rows_id ?? [];
     const colsId = data.columns_id ?? [];
     const cellSet = data.cell_set ?? {};
+    const hasHeaderRow = data.header_row === true;
 
     const rows: TableRow[] = rowsId.map((rowId, rowIndex) => {
       const cells: TableCell[] = colsId.map((colId) => {
@@ -652,18 +650,26 @@ const extractBlockFromData = (
         // Cell block may have children blocks
         const cellChildren = cellBlock.data.children ?? [];
         const inlines: Inline[] = [];
+        let listCounter = 1;
         for (const childId of cellChildren) {
           const childData = blockMap[childId]?.data;
           if (!childData) continue;
           const parsed = parseAttributedText(childData);
           if (parsed.length > 0) {
             if (inlines.length > 0) inlines.push({ type: "text", content: "\n" });
+            if (childData.type === "ordered") {
+              inlines.push({ type: "text", content: `${listCounter++}. ` });
+            } else if (childData.type === "bullet") {
+              inlines.push({ type: "text", content: "• " });
+            } else {
+              listCounter = 1;
+            }
             inlines.push(...parsed);
           }
         }
         return { children: inlines };
       });
-      return { cells, ...(rowIndex === 0 ? { isHeader: true } : {}) };
+      return { cells, ...(hasHeaderRow && rowIndex === 0 ? { isHeader: true } : {}) };
     });
 
     const hasContent = rows.some((row) =>
@@ -683,11 +689,28 @@ const extractBlockFromData = (
     return children.length ? { type: "callout", children } : null;
   }
 
+  // Embedded spreadsheet
+  if (type === "sheet") {
+    return { type: "paragraph", children: [{ type: "text", content: "[飞书电子表格]" }] };
+  }
+
   // Unknown types — skip
   return null;
 };
 
+const BRIDGE_ELEMENT_ID = "__feishu_block_map__";
+
 const getFeishuPageData = (): BlockMap | null => {
+  // Strategy 1: Read from MAIN world bridge element (CSP-safe)
+  const bridgeEl = document.getElementById(BRIDGE_ELEMENT_ID);
+  if (bridgeEl?.textContent) {
+    try {
+      const blockMap = JSON.parse(bridgeEl.textContent) as BlockMap;
+      if (blockMap && Object.keys(blockMap).length > 0) return blockMap;
+    } catch { /* fall through to strategy 2 */ }
+  }
+
+  // Strategy 2: Inline script injection (legacy fallback, may fail if CSP blocks inline scripts)
   const script = document.createElement("script");
   script.textContent = `
     (() => {
@@ -730,18 +753,88 @@ const extractDocFromFeishuData = (): Doc | null => {
   return { title, blocks: mergeAdjacentCodeBlocks(mergeAdjacentLists(blocks)) };
 };
 
+// ─── Scroll-based accumulation (virtual scrolling workaround) ────────────────
+
+const delay = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+const hashBlock = (block: Block): string => {
+  switch (block.type) {
+    case "heading":
+      return `h${block.level}:${block.children.map((i) => i.content).join("")}`;
+    case "paragraph":
+      return `p:${block.children.map((i) => i.content).join("")}`;
+    case "code":
+      return `code:${block.code.substring(0, 200)}`;
+    case "list":
+      return `list:${block.ordered}:${block.items.map((i) => i.children.map((c) => c.content).join("")).join("|")}`;
+    case "quote":
+      return `quote:${block.children.map((i) => i.content).join("")}`;
+    case "callout":
+      return `callout:${block.children.map((i) => i.content).join("")}`;
+    case "table":
+      return `table:${block.rows.map((r) => r.cells.map((c) => c.children.map((i) => i.content).join("")).join(",")).join(";")}`;
+    case "image":
+      return `img:${block.src}`;
+    case "divider":
+      return "divider";
+  }
+};
+
+const findScrollContainer = (root: Element): Element => {
+  let el: Element | null = root;
+  while (el && el !== document.documentElement) {
+    if (el.scrollHeight > el.clientHeight + 10) return el;
+    el = el.parentElement;
+  }
+  return document.documentElement;
+};
+
+const scrollAndAccumulateBlocks = async (root: Element): Promise<Block[]> => {
+  const container = findScrollContainer(root);
+  const savedScrollTop = container.scrollTop;
+  const allBlocks: Block[] = [];
+  const seenHashes = new Set<string>();
+
+  container.scrollTop = 0;
+  await delay(300);
+
+  let lastScrollTop = -1;
+
+  while (true) {
+    const visibleBlocks = getBlockElements(root)
+      .map(extractBlock)
+      .filter((b): b is Block => Boolean(b));
+
+    for (const block of visibleBlocks) {
+      const hash = hashBlock(block);
+      if (!seenHashes.has(hash)) {
+        seenHashes.add(hash);
+        allBlocks.push(block);
+      }
+    }
+
+    const scrollStep = container.clientHeight * 0.7;
+    container.scrollTop += scrollStep;
+    await delay(300);
+
+    if (container.scrollTop === lastScrollTop) break;
+    lastScrollTop = container.scrollTop;
+  }
+
+  container.scrollTop = savedScrollTop;
+  return allBlocks;
+};
+
 // ─── Main export ────────────────────────────────────────────────────────────────
 
-export const extractDocFromFeishu = (): Doc => {
+export const extractDocFromFeishu = async (): Promise<Doc> => {
   // Prefer data-based extraction (complete document, bypasses virtual scrolling)
   const dataDoc = extractDocFromFeishuData();
   if (dataDoc && dataDoc.blocks.length > 0) return dataDoc;
 
-  // Fallback: DOM-based extraction
+  // Fallback: scroll-based accumulation (handles virtual scrolling in /wiki/ pages)
   const root = getFeishuRoot();
-  const blocks = getBlockElements(root)
-    .map(extractBlock)
-    .filter((block): block is Block => Boolean(block));
+  const blocks = await scrollAndAccumulateBlocks(root);
   const mergedBlocks = mergeAdjacentCodeBlocks(mergeAdjacentLists(blocks));
 
   const titleEl = document.querySelector<HTMLElement>(

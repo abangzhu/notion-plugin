@@ -33,6 +33,15 @@
       ],
       "js": ["dist/content.js"],
       "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "https://*.feishu.cn/*",
+        "https://*.larksuite.com/*"
+      ],
+      "js": ["dist/feishu-bridge.js"],
+      "world": "MAIN",
+      "run_at": "document_idle"
     }
   ]
 }

@@ -1852,7 +1852,7 @@ export const initDrawer = () => {
 
     await loadSettings();
 
-    const nextSourceDoc = extractDoc();
+    const nextSourceDoc = await extractDoc();
     const nextSourceHash = hashDoc(nextSourceDoc);
     const nextSourcePageKey = getPageKey();
     const previousSourceHash = sourceHash;
