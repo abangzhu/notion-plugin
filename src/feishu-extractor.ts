@@ -1,4 +1,21 @@
-import type { Block, Doc, Inline, ListBlock, ListItem, TableBlock, TableRow } from "./types";
+import type { Block, Doc, Inline, ListBlock, ListItem, TableBlock, TableCell, TableRow } from "./types";
+
+// ─── Feishu data types ────────────────────────────────────────────────────────
+
+type FeishuBlockData = {
+  type: string;
+  parent_id: string;
+  children?: string[];
+  text?: {
+    apool: { numToAttrib: Record<string, [string, string]> };
+    initialAttributedTexts: { attribs: Record<string, string>; text: Record<string, string> };
+  };
+  columns_id?: string[];
+  rows_id?: string[];
+  cell_set?: Record<string, { block_id: string; merge_info: { row_span: number; col_span: number } }>;
+  language?: string;
+};
+type BlockMap = Record<string, { id: string; data: FeishuBlockData }>;
 
 // ─── DOM helpers ───────────────────────────────────────────────────────────────
 
@@ -399,6 +416,12 @@ const extractBlock = (blockEl: HTMLElement): Block | null => {
     return null;
   }
 
+  // Quote — fallback: some feishu quotes use data-block-type="text" with quote class
+  if (blockEl.classList.contains("quote-container-render-unit")) {
+    const children = extractInlinesFromFeishuBlock(blockEl);
+    return children.length ? { type: "quote", children } : null;
+  }
+
   // Text / fallback → paragraph
   const children = extractInlinesFromFeishuBlock(blockEl);
   return children.length ? { type: "paragraph", children } : null;
@@ -423,7 +446,7 @@ const mergeAdjacentLists = (blocks: Block[]): Block[] => {
       prev.items.every((item) => !item.nested?.length) &&
       block.items.every((item) => !item.nested?.length)
     ) {
-      prev.items.push(...block.items);
+      merged[merged.length - 1] = { ...prev, items: [...prev.items, ...block.items] };
       return;
     }
 
@@ -458,9 +481,263 @@ const mergeAdjacentCodeBlocks = (blocks: Block[]): Block[] => {
   return merged;
 };
 
+// ─── Data-based extraction (bypasses virtual scrolling) ─────────────────────
+
+const parseBase36 = (s: string): number => {
+  const n = parseInt(s, 36);
+  return Number.isNaN(n) ? 0 : n;
+};
+
+const parseAttributedText = (blockData: FeishuBlockData): Inline[] => {
+  const textData = blockData.text;
+  if (!textData) return [];
+
+  const { apool, initialAttributedTexts } = textData;
+  const attribStr = initialAttributedTexts.attribs["0"] ?? "";
+  const textStr = initialAttributedTexts.text["0"] ?? "";
+  if (!textStr) return [];
+
+  const numToAttrib = apool.numToAttrib;
+  // Etherpad changeset format: *N = activate attrib N, |N = deactivate/line-boundary, +X = insert X chars (base36)
+  const regex = /(\*([0-9a-z]+))|(\|([0-9a-z]+))?\+([0-9a-z]+)/g;
+
+  // Track active attributes by name → apool key (so we can resolve the correct value)
+  const activeAttribs = new Map<string, string>();
+  const inlines: Inline[] = [];
+  let textPos = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = regex.exec(attribStr)) !== null) {
+    if (match[1]) {
+      // *N → activate attribute N
+      const key = match[2];
+      const attrib = numToAttrib[key];
+      if (attrib) activeAttribs.set(attrib[0], key);
+    } else {
+      // |N before + → deactivate attribute N
+      if (match[3] && match[4]) {
+        const key = match[4];
+        const attrib = numToAttrib[key];
+        if (attrib) activeAttribs.delete(attrib[0]);
+      }
+
+      // +X → consume X characters
+      const count = parseBase36(match[5]);
+      const content = textStr.slice(textPos, textPos + count);
+      textPos += count;
+
+      if (content === "\n" || !content) {
+        activeAttribs.clear();
+        continue;
+      }
+
+      // Resolve attributes by priority: link > code > highlight > formatting > text
+      // Our Inline type is single-format, so pick the most semantically significant one
+      let inlineType: Inline["type"] = "text";
+      let href: string | undefined;
+      let highlightColor: string | undefined;
+
+      for (const [attr, poolKey] of activeAttribs) {
+        if (attr === "link") {
+          inlineType = "link";
+          const attribEntry = numToAttrib[poolKey];
+          try {
+            const linkData = JSON.parse(attribEntry?.[1] ?? "{}");
+            href = linkData.url ?? "";
+          } catch {
+            href = "";
+          }
+        } else if (attr === "inlineCode" && inlineType !== "link") {
+          inlineType = "code";
+        } else if (attr === "textHighlight" && inlineType === "text") {
+          inlineType = "highlight";
+          const attribEntry = numToAttrib[poolKey];
+          highlightColor = attribEntry?.[1] ?? "#fff3b0";
+        } else if (attr === "bold" && inlineType === "text") {
+          inlineType = "bold";
+        } else if (attr === "italic" && inlineType === "text") {
+          inlineType = "italic";
+        } else if (attr === "underline" && inlineType === "text") {
+          inlineType = "underline";
+        } else if (attr === "strikethrough" && inlineType === "text") {
+          inlineType = "strikethrough";
+        }
+      }
+
+      if (inlineType === "link" && href !== undefined) {
+        inlines.push({ type: "link", content, href });
+      } else if (inlineType === "highlight" && highlightColor) {
+        inlines.push({ type: "highlight", content, highlightColor });
+      } else if (inlineType === "code") {
+        inlines.push({ type: "code", content });
+      } else if (inlineType === "bold" || inlineType === "italic" || inlineType === "underline" || inlineType === "strikethrough") {
+        inlines.push({ type: inlineType, content });
+      } else {
+        inlines.push({ type: "text", content });
+      }
+
+      activeAttribs.clear();
+    }
+  }
+
+  return inlines;
+};
+
+const extractBlockFromData = (
+  data: FeishuBlockData | undefined,
+  blockMap: BlockMap
+): Block | null => {
+  if (!data) return null;
+  const { type } = data;
+
+  // Heading
+  if (type === "heading1" || type === "heading2" || type === "heading3") {
+    const level = parseInt(type.replace("heading", ""), 10) as 1 | 2 | 3;
+    const children = parseAttributedText(data);
+    return children.length ? { type: "heading", level, children } : null;
+  }
+
+  // Text → paragraph (skip empty)
+  if (type === "text") {
+    const children = parseAttributedText(data);
+    return children.length ? { type: "paragraph", children } : null;
+  }
+
+  // Quote container
+  if (type === "quote_container") {
+    const allInlines: Inline[] = [];
+    for (const childId of data.children ?? []) {
+      const childData = blockMap[childId]?.data;
+      if (!childData) continue;
+      const inlines = parseAttributedText(childData);
+      if (inlines.length > 0) {
+        if (allInlines.length > 0) {
+          allInlines.push({ type: "text", content: "\n" });
+        }
+        allInlines.push(...inlines);
+      }
+    }
+    return allInlines.length ? { type: "quote", children: allInlines } : null;
+  }
+
+  // Lists
+  if (type === "ordered" || type === "bullet") {
+    const children = parseAttributedText(data);
+    if (!children.length) return null;
+    return { type: "list", ordered: type === "ordered", items: [{ children }] };
+  }
+
+  // Code
+  if (type === "code") {
+    const textData = data.text;
+    const code = textData?.initialAttributedTexts?.text?.["0"]?.replace(/\n+$/, "") ?? "";
+    if (!code) return null;
+    const language = data.language ? normalizeLanguageName(data.language) : undefined;
+    return { type: "code", code: stripInvisibleChars(code), ...(language ? { language } : {}) };
+  }
+
+  // Table
+  if (type === "table") {
+    const rowsId = data.rows_id ?? [];
+    const colsId = data.columns_id ?? [];
+    const cellSet = data.cell_set ?? {};
+
+    const rows: TableRow[] = rowsId.map((rowId, rowIndex) => {
+      const cells: TableCell[] = colsId.map((colId) => {
+        const cellKey = `${rowId}${colId}`;
+        const cellInfo = cellSet[cellKey];
+        if (!cellInfo) return { children: [] };
+        const cellBlock = blockMap[cellInfo.block_id];
+        if (!cellBlock) return { children: [] };
+        // Cell block may have children blocks
+        const cellChildren = cellBlock.data.children ?? [];
+        const inlines: Inline[] = [];
+        for (const childId of cellChildren) {
+          const childData = blockMap[childId]?.data;
+          if (!childData) continue;
+          const parsed = parseAttributedText(childData);
+          if (parsed.length > 0) {
+            if (inlines.length > 0) inlines.push({ type: "text", content: "\n" });
+            inlines.push(...parsed);
+          }
+        }
+        return { children: inlines };
+      });
+      return { cells, ...(rowIndex === 0 ? { isHeader: true } : {}) };
+    });
+
+    const hasContent = rows.some((row) =>
+      row.cells.some((cell) => cell.children.length > 0)
+    );
+    return hasContent ? { type: "table", rows } : null;
+  }
+
+  // Divider
+  if (type === "divider") {
+    return { type: "divider" };
+  }
+
+  // Callout
+  if (type === "callout") {
+    const children = parseAttributedText(data);
+    return children.length ? { type: "callout", children } : null;
+  }
+
+  // Unknown types — skip
+  return null;
+};
+
+const getFeishuPageData = (): BlockMap | null => {
+  const script = document.createElement("script");
+  script.textContent = `
+    (() => {
+      const data = window.DATA?.clientVars?.data;
+      if (data?.block_map) {
+        document.dispatchEvent(new CustomEvent("__feishu_data__", {
+          detail: JSON.stringify(data.block_map)
+        }));
+      }
+    })();
+  `;
+
+  let blockMap: BlockMap | null = null;
+  const handler = (e: Event) => {
+    try {
+      blockMap = JSON.parse((e as CustomEvent).detail);
+    } catch { /* ignore */ }
+  };
+
+  document.addEventListener("__feishu_data__", handler);
+  document.documentElement.appendChild(script);
+  script.remove();
+  document.removeEventListener("__feishu_data__", handler);
+
+  return blockMap;
+};
+
+const extractDocFromFeishuData = (): Doc | null => {
+  const blockMap = getFeishuPageData();
+  if (!blockMap) return null;
+  const pageBlock = Object.values(blockMap).find((b) => b.data.type === "page");
+  if (!pageBlock?.data.children) return null;
+
+  const blocks = pageBlock.data.children
+    .map((id) => extractBlockFromData(blockMap[id]?.data, blockMap))
+    .filter((block): block is Block => Boolean(block));
+
+  const title = pageBlock.data.text?.initialAttributedTexts?.text?.["0"]?.trim();
+
+  return { title, blocks: mergeAdjacentCodeBlocks(mergeAdjacentLists(blocks)) };
+};
+
 // ─── Main export ────────────────────────────────────────────────────────────────
 
 export const extractDocFromFeishu = (): Doc => {
+  // Prefer data-based extraction (complete document, bypasses virtual scrolling)
+  const dataDoc = extractDocFromFeishuData();
+  if (dataDoc && dataDoc.blocks.length > 0) return dataDoc;
+
+  // Fallback: DOM-based extraction
   const root = getFeishuRoot();
   const blocks = getBlockElements(root)
     .map(extractBlock)
