@@ -1,6 +1,6 @@
 # Notion2WeChat
 
-将 Notion 页面内容一键转换为可发布内容的 Chrome 扩展，支持公众号 HTML、Markdown，以及基于 OpenAI 的文档翻译预览。
+将 Notion / 飞书页面内容一键转换为可发布内容的 Chrome 扩展，支持公众号 HTML、Markdown，以及基于 OpenAI 的文档翻译预览。
 
 ## 功能列表
 
@@ -29,6 +29,15 @@
 - 加载过程中状态栏会显示进度（如 `图片加载中 2/5`）
 - 加载失败的图片会保留原始 URL 并提示失败数量
 - 切换页面或刷新时自动重新加载
+
+## 飞书文档支持
+
+支持飞书 `/docx/` 和 `/wiki/` 两种页面路径，采用分级提取策略：
+
+1. **数据提取**（`/docx/` 页面优先）— 通过 MAIN world 脚本读取 `window.DATA.clientVars.data.block_map`，直接获取完整文档结构，绕过虚拟滚动限制
+2. **滚动累积提取**（`/wiki/` 页面回退）— 飞书 wiki 页面使用虚拟滚动且不暴露全局数据对象，扩展会自动从页面顶部滚动到底部，逐步采集可见 DOM 块并通过内容哈希去重，最终拼合完整文档
+
+两种策略对用户透明，打开抽屉后自动选择最优路径。
 
 ## 已支持内容格式
 
@@ -90,7 +99,7 @@ npm run build
 - 选择本项目目录
 
 4. 使用
-- 打开 `https://www.notion.so/*` 页面
+- 打开 Notion（`https://www.notion.so/*`）或飞书（`https://*.feishu.cn/docx/*`、`https://*.feishu.cn/wiki/*`）页面
 - 点击扩展图标打开右侧抽屉
 - 选择主题 / 字体 / 字号
 - 按需点击：
@@ -116,6 +125,6 @@ npm run build
 
 ## 说明
 
-- 目前仅支持 Notion 网页端（`https://www.notion.so/*`）。
+- 支持 Notion 网页端（`https://www.notion.so/*`）和飞书文档（`https://*.feishu.cn/docx/*`、`https://*.feishu.cn/wiki/*`）。
 - 翻译能力当前基于 OpenAI 官方接口。
-- Notion DOM 结构变更时，个别 block 提取规则可能需要更新。
+- Notion / 飞书 DOM 结构变更时，个别 block 提取规则可能需要更新。

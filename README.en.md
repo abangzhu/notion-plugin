@@ -1,6 +1,6 @@
 # Notion2WeChat
 
-A Chrome Extension that converts Notion pages into publishable content — WeChat-optimized HTML, Markdown, and AI-powered translation powered by OpenAI.
+A Chrome Extension that converts Notion / Feishu (Lark) pages into publishable content — WeChat-optimized HTML, Markdown, and AI-powered translation powered by OpenAI.
 
 ## Features
 
@@ -29,6 +29,15 @@ When the drawer opens, the extension automatically preloads all images on the pa
 - Progress is shown in the status bar during loading (e.g., `Loading images 2/5`)
 - Failed images fall back to their original URL with a failure count notification
 - Images are automatically reloaded when switching pages or refreshing
+
+## Feishu Document Support
+
+Supports both Feishu `/docx/` and `/wiki/` page paths with a tiered extraction strategy:
+
+1. **Data extraction** (preferred for `/docx/` pages) — A MAIN world script reads `window.DATA.clientVars.data.block_map` to get the full document structure directly, bypassing virtual scrolling
+2. **Scroll-based accumulation** (fallback for `/wiki/` pages) — Feishu wiki pages use virtual scrolling and don't expose a global data object. The extension automatically scrolls from top to bottom, collecting visible DOM blocks at each step and deduplicating via content hashing to assemble the full document
+
+Both strategies are transparent to the user — the optimal path is chosen automatically when the drawer opens.
 
 ## Supported Content Formats
 
@@ -90,7 +99,7 @@ npm run build
 - Select this project directory
 
 4. Usage
-- Navigate to any `https://www.notion.so/*` page
+- Navigate to any Notion (`https://www.notion.so/*`) or Feishu (`https://*.feishu.cn/docx/*`, `https://*.feishu.cn/wiki/*`) page
 - Click the extension icon to open the side drawer
 - Choose theme / font / font size
 - Use as needed:
@@ -116,6 +125,6 @@ npm run build       # Production build
 
 ## Notes
 
-- Currently supports Notion web only (`https://www.notion.so/*`).
+- Supports Notion web (`https://www.notion.so/*`) and Feishu / Lark documents (`https://*.feishu.cn/docx/*`, `https://*.feishu.cn/wiki/*`).
 - Translation is powered by the OpenAI API.
-- If Notion's DOM structure changes, some block extraction rules may need updating.
+- If Notion's or Feishu's DOM structure changes, some block extraction rules may need updating.

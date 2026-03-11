@@ -12,7 +12,10 @@
     "https://*.amazonaws.com/*",
     "https://*.s3.amazonaws.com/*",
     "https://*.cloudfront.net/*",
-    "https://api.openai.com/*"
+    "https://api.openai.com/*",
+    "https://*.feishu.cn/*",
+    "https://*.larksuite.com/*",
+    "https://*.byteimg.com/*"
   ],
   "action": {
     "default_title": "Notion2WeChat"
@@ -23,8 +26,21 @@
   },
   "content_scripts": [
     {
-      "matches": ["https://www.notion.so/*"],
+      "matches": [
+        "https://www.notion.so/*",
+        "https://*.feishu.cn/*",
+        "https://*.larksuite.com/*"
+      ],
       "js": ["dist/content.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "https://*.feishu.cn/*",
+        "https://*.larksuite.com/*"
+      ],
+      "js": ["dist/feishu-bridge.js"],
+      "world": "MAIN",
       "run_at": "document_idle"
     }
   ]
