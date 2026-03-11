@@ -188,7 +188,10 @@ const getBlockElements = (root: Element): HTMLElement[] => {
   if (allBlocks.length > 0) {
     return allBlocks.filter((block) => {
       const blockType = block.getAttribute("data-block-type") ?? "";
-      return blockType !== "table_cell" && blockType !== "page";
+      if (blockType === "table_cell" || blockType === "page") return false;
+      if (block.closest('[data-block-type="quote_container"]') && blockType !== "quote_container") return false;
+      if (block.closest('[data-block-type="table"]') && blockType !== "table") return false;
+      return true;
     });
   }
   // Fallback: direct children
@@ -279,22 +282,44 @@ const extractBlock = (blockEl: HTMLElement): Block | null => {
     return children.length ? { type: "heading", level, children } : null;
   }
 
-  // Table — feishu uses standard <table> inside data-block-type="table"
+  // Table — feishu uses two separate <table> elements: sticky header + content scroller
   if (blockType === "table") {
-    const tableEl = blockEl.querySelector("table");
-    if (tableEl) {
-      const trElements = Array.from(tableEl.querySelectorAll("tr"));
-      const rows: TableRow[] = trElements.map((row, rowIndex) => {
+    const tableEls = Array.from(blockEl.querySelectorAll("table"));
+    if (tableEls.length > 0) {
+      const allTrs: HTMLTableRowElement[] = [];
+      tableEls.forEach((tableEl) => {
+        allTrs.push(
+          ...Array.from(
+            tableEl.querySelectorAll<HTMLTableRowElement>(
+              ":scope > thead > tr, :scope > tbody > tr, :scope > tr"
+            )
+          )
+        );
+      });
+      // Deduplicate: sticky header row may appear in both tables
+      const seen = new Set<string>();
+      const uniqueTrs = allTrs.filter((tr) => {
+        const key = tr.getAttribute("data-index") ?? tr.textContent ?? "";
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+      const rows: TableRow[] = uniqueTrs.map((row, rowIndex) => {
         const cellElements = Array.from(row.querySelectorAll("td, th"));
         const cells = cellElements.map((cell) => ({
-          children: extractInlinesFromNodes(Array.from(cell.childNodes))
+          children: extractInlinesFromFeishuBlock(cell as HTMLElement)
         }));
         const inThead = row.closest("thead") !== null;
-        const allTh = cellElements.length > 0 && cellElements.every((c) => c.tagName === "TH");
-        const isHeader = inThead || (rowIndex === 0 && allTh);
+        const isStickyRow =
+          row.classList.contains("sticky-row") || row.classList.contains("first-row");
+        const allTh =
+          cellElements.length > 0 && cellElements.every((c) => c.tagName === "TH");
+        const isHeader = inThead || isStickyRow || (rowIndex === 0 && allTh);
         return { cells, ...(isHeader ? { isHeader: true } : {}) };
       });
-      const hasContent = rows.some((row) => row.cells.some((cell) => cell.children.length > 0));
+      const hasContent = rows.some((row) =>
+        row.cells.some((cell) => cell.children.length > 0)
+      );
       if (hasContent) {
         const tableBlock: TableBlock = { type: "table", rows };
         return tableBlock;
@@ -322,7 +347,25 @@ const extractBlock = (blockEl: HTMLElement): Block | null => {
   }
 
   // Quote
-  if (blockType === "quote") {
+  if (blockType === "quote" || blockType === "quote_container") {
+    if (blockType === "quote_container") {
+      const childBlocks = Array.from(
+        blockEl.querySelectorAll<HTMLElement>(
+          ".quote-container-block-children .block[data-block-type]"
+        )
+      );
+      const allInlines: Inline[] = [];
+      childBlocks.forEach((child) => {
+        const inlines = extractInlinesFromFeishuBlock(child);
+        if (inlines.length > 0) {
+          if (allInlines.length > 0) {
+            allInlines.push({ type: "text", content: "\n" });
+          }
+          allInlines.push(...inlines);
+        }
+      });
+      return allInlines.length ? { type: "quote", children: allInlines } : null;
+    }
     const contentEl = blockEl.querySelector<HTMLElement>(".text-editor") ?? blockEl;
     const children = extractInlinesFromFeishuBlock(contentEl);
     return children.length ? { type: "quote", children } : null;
