@@ -1,6 +1,6 @@
 # Notion2WeChat
 
-将 Notion 页面内容一键转换为可发布内容的 Chrome 扩展，支持公众号 HTML、Markdown，以及基于 OpenAI 的文档翻译预览。
+将 Notion / 飞书页面内容一键转换为可发布内容的 Chrome 扩展，支持公众号 HTML、Markdown，以及基于 OpenAI 的文档翻译预览。
 
 ## 功能列表
 
@@ -90,7 +90,7 @@ npm run build
 - 选择本项目目录
 
 4. 使用
-- 打开 `https://www.notion.so/*` 页面
+- 打开 Notion（`https://www.notion.so/*`）或飞书（`https://*.feishu.cn/docx/*`、`https://*.feishu.cn/wiki/*`）页面
 - 点击扩展图标打开右侧抽屉
 - 选择主题 / 字体 / 字号
 - 按需点击：
@@ -116,6 +116,6 @@ npm run build
 
 ## 说明
 
-- 目前仅支持 Notion 网页端（`https://www.notion.so/*`）。
+- 支持 Notion 网页端（`https://www.notion.so/*`）和飞书文档（`https://*.feishu.cn/docx/*`、`https://*.feishu.cn/wiki/*`）。
 - 翻译能力当前基于 OpenAI 官方接口。
-- Notion DOM 结构变更时，个别 block 提取规则可能需要更新。
+- Notion / 飞书 DOM 结构变更时，个别 block 提取规则可能需要更新。

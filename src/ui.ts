@@ -1,5 +1,5 @@
 import { writeClipboard } from "./clipboard";
-import { extractDocFromNotion } from "./extractor";
+import { extractDoc, getPageKey } from "./platform";
 import { renderDocToHtml, renderDocToMarkdown, renderDocToText } from "./renderer";
 import {
   STYLE_PRESET_OPTIONS,
@@ -45,7 +45,7 @@ const DRAWER_ID = "__notion_wechat_drawer";
 const DRAWER_STYLE_ID = "__notion_wechat_drawer_style";
 const ACCENT = "#10b981";
 const TRANSLATION_CACHE_PREFIX = "translationCache";
-const NOTION_PAGE_ID_PATTERN = /[0-9a-f]{32}|[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}/i;
+
 
 type ThemePreset = {
   id: string;
@@ -1024,22 +1024,6 @@ export const initDrawer = () => {
     return "当前语言";
   };
 
-  const getCurrentPageKey = (): string => {
-    const url = new URL(window.location.href);
-    const pageParam = url.searchParams.get("p");
-    const lastPathSegment = url.pathname.split("/").filter(Boolean).at(-1) ?? url.pathname;
-
-    for (const candidate of [pageParam, lastPathSegment]) {
-      if (!candidate) continue;
-      const match = candidate.match(NOTION_PAGE_ID_PATTERN);
-      if (match) {
-        return match[0].replace(/-/g, "").toLowerCase();
-      }
-    }
-
-    return url.pathname;
-  };
-
   const getTranslateDisabledReason = (): string => {
     if (!sourceDoc || !sourceHash) return "未检测到可翻译内容";
     if (translationState === "translating") return "";
@@ -1391,6 +1375,11 @@ export const initDrawer = () => {
   const loadSettings = async () => {
     if (!settingsLoadPromise) {
       settingsLoadPromise = (async () => {
+        if (!chrome.storage?.local) {
+          translationSettings = normalizeTranslationSettings(undefined);
+          syncSettingsForm();
+          return;
+        }
         const stored = await chrome.storage.local.get(TRANSLATION_SETTINGS_KEY);
         translationSettings = normalizeTranslationSettings(
           stored[TRANSLATION_SETTINGS_KEY] as Partial<TranslationSettings> | undefined
@@ -1808,6 +1797,11 @@ export const initDrawer = () => {
     setSettingsStatus("正在保存设置…");
 
     try {
+      if (!chrome.storage?.local) {
+        setSettingsStatus("扩展上下文已失效，请刷新页面后重试");
+        setButtonDisabled(drawerRefs.settingsSaveButton, false);
+        return;
+      }
       await chrome.storage.local.set({
         [TRANSLATION_SETTINGS_KEY]: nextSettings
       });
@@ -1858,9 +1852,9 @@ export const initDrawer = () => {
 
     await loadSettings();
 
-    const nextSourceDoc = extractDocFromNotion();
+    const nextSourceDoc = extractDoc();
     const nextSourceHash = hashDoc(nextSourceDoc);
-    const nextSourcePageKey = getCurrentPageKey();
+    const nextSourcePageKey = getPageKey();
     const previousSourceHash = sourceHash;
     const previousSourcePageKey = sourcePageKey;
     const pageChanged = Boolean(previousSourcePageKey) && previousSourcePageKey !== nextSourcePageKey;
