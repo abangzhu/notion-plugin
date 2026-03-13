@@ -410,6 +410,11 @@ const extractBlock = (blockEl: HTMLElement): Block | null => {
     return children.length ? { type: "callout", children } : null;
   }
 
+  // Whiteboard
+  if (blockType === "whiteboard") {
+    return { type: "paragraph", children: [{ type: "text", content: "[飞书白板]" }] };
+  }
+
   // Image
   if (blockType === "image") {
     const imgEl = blockEl.querySelector("img");
@@ -689,6 +694,11 @@ const extractBlockFromData = (
     return children.length ? { type: "callout", children } : null;
   }
 
+  // Whiteboard
+  if (type === "whiteboard" || type === "board") {
+    return { type: "paragraph", children: [{ type: "text", content: "[飞书白板]" }] };
+  }
+
   // Embedded spreadsheet
   if (type === "sheet") {
     return { type: "paragraph", children: [{ type: "text", content: "[飞书电子表格]" }] };
@@ -771,8 +781,10 @@ const hashBlock = (block: Block): string => {
       return `quote:${block.children.map((i) => i.content).join("")}`;
     case "callout":
       return `callout:${block.children.map((i) => i.content).join("")}`;
-    case "table":
-      return `table:${block.rows.map((r) => r.cells.map((c) => c.children.map((i) => i.content).join("")).join(",")).join(";")}`;
+    case "table": {
+      const firstRowContent = block.rows[0]?.cells.map((c) => c.children.map((i) => i.content).join("")).join(",") ?? "";
+      return `table:${block.rows.length}x${block.rows[0]?.cells.length ?? 0}:${firstRowContent}`;
+    }
     case "image":
       return `img:${block.src}`;
     case "divider":
@@ -789,11 +801,38 @@ const findScrollContainer = (root: Element): Element => {
   return document.documentElement;
 };
 
+const ensureTableRowsRendered = async (tableBlockEl: HTMLElement): Promise<void> => {
+  const scrollContainer = tableBlockEl.querySelector<HTMLElement>(
+    '.table-scroll-container, .table-body-container, [class*="virtual-scroll"], [class*="scroll-container"]'
+  );
+  const target = scrollContainer ?? tableBlockEl;
+  if (target.scrollHeight <= target.clientHeight + 10) return;
+
+  const saved = target.scrollTop;
+  let last = -1;
+  while (target.scrollTop !== last) {
+    last = target.scrollTop;
+    target.scrollTop += target.clientHeight * 0.8;
+    await delay(150);
+  }
+  target.scrollTop = saved;
+  await delay(100);
+};
+
+const tableContentScore = (block: Block): number => {
+  if (block.type !== "table") return 0;
+  return block.rows.reduce(
+    (sum, row) => sum + row.cells.reduce((s, c) => s + c.children.length, 0),
+    0
+  );
+};
+
 const scrollAndAccumulateBlocks = async (root: Element): Promise<Block[]> => {
   const container = findScrollContainer(root);
   const savedScrollTop = container.scrollTop;
   const allBlocks: Block[] = [];
   const seenHashes = new Set<string>();
+  const tableHashToIndex = new Map<string, number>();
 
   container.scrollTop = 0;
   await delay(300);
@@ -801,8 +840,17 @@ const scrollAndAccumulateBlocks = async (root: Element): Promise<Block[]> => {
   let lastScrollTop = -1;
 
   while (true) {
+    // Pre-scroll any table containers to force virtual rows to render
+    const tableEls = Array.from(root.querySelectorAll<HTMLElement>('.block[data-block-type="table"]'));
+    for (const tableEl of tableEls) {
+      await ensureTableRowsRendered(tableEl);
+    }
+
     const visibleBlocks = getBlockElements(root)
-      .map(extractBlock)
+      .map((el) => {
+        try { return extractBlock(el); }
+        catch { return null; }
+      })
       .filter((b): b is Block => Boolean(b));
 
     for (const block of visibleBlocks) {
@@ -810,6 +858,15 @@ const scrollAndAccumulateBlocks = async (root: Element): Promise<Block[]> => {
       if (!seenHashes.has(hash)) {
         seenHashes.add(hash);
         allBlocks.push(block);
+        if (block.type === "table") {
+          tableHashToIndex.set(hash, allBlocks.length - 1);
+        }
+      } else if (block.type === "table") {
+        // Replace with more complete version if this scroll pass rendered more rows
+        const idx = tableHashToIndex.get(hash);
+        if (idx !== undefined && tableContentScore(block) > tableContentScore(allBlocks[idx])) {
+          allBlocks[idx] = block;
+        }
       }
     }
 

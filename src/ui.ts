@@ -982,6 +982,7 @@ export const initDrawer = () => {
   let settingsGuardAttached = false;
   let activeThemeWrapper: HTMLElement | null = null;
   let activeThemeMenu: HTMLElement | null = null;
+  let drawerOpenedAt = 0;
 
   let sourceDoc: Doc | null = null;
   let sourceHash = "";
@@ -1951,6 +1952,7 @@ export const initDrawer = () => {
     drawer = drawerRefs.container;
     activeThemeWrapper = drawerRefs.themeWrapper;
     activeThemeMenu = drawerRefs.themeMenu;
+    drawerOpenedAt = Date.now();
 
     updateThemeButton();
     updateFontButtons();
@@ -2165,7 +2167,7 @@ export const initDrawer = () => {
           activeThemeMenu.style.display = "none";
         }
 
-        if (drawer && !drawer.contains(target)) {
+        if (drawer && !drawer.contains(target) && Date.now() - drawerOpenedAt > 300) {
           closeDrawer();
         }
       });
@@ -2202,6 +2204,11 @@ export const initDrawer = () => {
     }
 
     document.body.appendChild(drawer);
+
+    // 如果有缓存内容，立即渲染到新 drawer DOM，避免重新提取期间空白
+    if (sourceDoc) {
+      renderPreview();
+    }
 
     void (async () => {
       await refreshSource({ announce: false, activateCachedTranslation: false });
