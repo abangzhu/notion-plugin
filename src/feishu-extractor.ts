@@ -533,21 +533,38 @@ const parseAttributedText = (blockData: FeishuBlockData): Inline[] => {
         continue;
       }
 
-      // Resolve attributes by priority: link > code > highlight > formatting > text
+      // Resolve attributes by priority: inline-component/link > code > highlight > formatting > text
       // Our Inline type is single-format, so pick the most semantically significant one
       let inlineType: Inline["type"] = "text";
       let href: string | undefined;
       let highlightColor: string | undefined;
+      let mentionTitle: string | undefined;
 
       for (const [attr, poolKey] of activeAttribs) {
-        if (attr === "link") {
-          inlineType = "link";
+        if (attr === "inline-component") {
           const attribEntry = numToAttrib[poolKey];
           try {
-            const linkData = JSON.parse(attribEntry?.[1] ?? "{}");
+            const componentData = JSON.parse(attribEntry?.[1] ?? "{}");
+            if (componentData.type === "mention_doc" && componentData.data) {
+              inlineType = "link";
+              href = componentData.data.raw_url ?? "";
+              mentionTitle = componentData.data.title ?? "";
+            }
+          } catch { /* ignore malformed component data */ }
+        } else if (attr === "link") {
+          inlineType = "link";
+          const attribEntry = numToAttrib[poolKey];
+          const rawValue = attribEntry?.[1] ?? "";
+          try {
+            const linkData = JSON.parse(rawValue);
             href = linkData.url ?? "";
           } catch {
-            href = "";
+            // Not JSON — treat as URL-encoded or plain URL
+            try {
+              href = decodeURIComponent(rawValue);
+            } catch {
+              href = rawValue;
+            }
           }
         } else if (attr === "inlineCode" && inlineType !== "link") {
           inlineType = "code";
@@ -566,8 +583,10 @@ const parseAttributedText = (blockData: FeishuBlockData): Inline[] => {
         }
       }
 
+      const finalContent = mentionTitle || content;
+
       if (inlineType === "link" && href !== undefined) {
-        inlines.push({ type: "link", content, href });
+        inlines.push({ type: "link", content: finalContent, href });
       } else if (inlineType === "highlight" && highlightColor) {
         inlines.push({ type: "highlight", content, highlightColor });
       } else if (inlineType === "code") {
