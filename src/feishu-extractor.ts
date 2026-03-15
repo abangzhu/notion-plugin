@@ -748,42 +748,58 @@ const getFeishuPageData = (): BlockMap | null => {
   return blockMap;
 };
 
-const extractDocFromFeishuData = (): Doc | null => {
+type DataExtractionResult = {
+  doc: Doc;
+  hasMissingBlocks: boolean;
+};
+
+const extractDocFromFeishuData = (): DataExtractionResult | null => {
   const blockMap = getFeishuPageData();
   if (!blockMap) return null;
   const pageBlock = Object.values(blockMap).find((b) => b.data.type === "page");
   if (!pageBlock?.data.children) return null;
 
-  const blocks = pageBlock.data.children
+  const childIds = pageBlock.data.children;
+  const hasMissingBlocks = childIds.some((id) => !blockMap[id]);
+
+  const blocks = childIds
     .map((id) => extractBlockFromData(blockMap[id]?.data, blockMap))
     .filter((block): block is Block => Boolean(block));
 
   const title = pageBlock.data.text?.initialAttributedTexts?.text?.["0"]?.trim();
 
-  return { title, blocks: mergeAdjacentCodeBlocks(mergeAdjacentLists(blocks)) };
+  return {
+    doc: { title, blocks: mergeAdjacentCodeBlocks(mergeAdjacentLists(blocks)) },
+    hasMissingBlocks,
+  };
 };
 
 // ─── Scroll-based accumulation (virtual scrolling workaround) ────────────────
 
 const delay = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
+const normalizeForHash = (text: string): string =>
+  text.replace(/[\u200B\u200C\u200D\uFEFF\u00A0]/g, "").replace(/\s+/g, " ").trim();
+
 const hashBlock = (block: Block): string => {
   switch (block.type) {
     case "heading":
-      return `h${block.level}:${block.children.map((i) => i.content).join("")}`;
+      return `h${block.level}:${block.children.map((i) => normalizeForHash(i.content)).join("")}`;
     case "paragraph":
-      return `p:${block.children.map((i) => i.content).join("")}`;
+      return `p:${block.children.map((i) => normalizeForHash(i.content)).join("")}`;
     case "code":
-      return `code:${block.code.substring(0, 200)}`;
+      return `code:${normalizeForHash(block.code).substring(0, 200)}`;
     case "list":
-      return `list:${block.ordered}:${block.items.map((i) => i.children.map((c) => c.content).join("")).join("|")}`;
+      return `list:${block.ordered}:${block.items.map((i) => i.children.map((c) => normalizeForHash(c.content)).join("")).join("|")}`;
     case "quote":
-      return `quote:${block.children.map((i) => i.content).join("")}`;
+      return `quote:${block.children.map((i) => normalizeForHash(i.content)).join("")}`;
     case "callout":
-      return `callout:${block.children.map((i) => i.content).join("")}`;
+      return `callout:${block.children.map((i) => normalizeForHash(i.content)).join("")}`;
     case "table": {
-      const firstRowContent = block.rows[0]?.cells.map((c) => c.children.map((i) => i.content).join("")).join(",") ?? "";
-      return `table:${block.rows.length}x${block.rows[0]?.cells.length ?? 0}:${firstRowContent}`;
+      const firstRowContent = block.rows[0]?.cells
+        .map((c) => c.children.map((i) => normalizeForHash(i.content)).join(""))
+        .join(",") ?? "";
+      return `table:${block.rows[0]?.cells.length ?? 0}:${firstRowContent}`;
     }
     case "image":
       return `img:${block.src}`;
@@ -886,14 +902,62 @@ const scrollAndAccumulateBlocks = async (root: Element): Promise<Block[]> => {
 
 export const extractDocFromFeishu = async (): Promise<Doc> => {
   // Prefer data-based extraction (complete document, bypasses virtual scrolling)
-  const dataDoc = extractDocFromFeishuData();
-  if (dataDoc && dataDoc.blocks.length > 0) return dataDoc;
+  const dataResult = extractDocFromFeishuData();
 
-  // Fallback: scroll-based accumulation (handles virtual scrolling in /wiki/ pages)
+  if (dataResult && dataResult.doc.blocks.length > 0 && !dataResult.hasMissingBlocks) {
+    return dataResult.doc;
+  }
+
+  // Scroll-based extraction for fallback or supplement
   const root = getFeishuRoot();
-  const blocks = await scrollAndAccumulateBlocks(root);
-  const mergedBlocks = mergeAdjacentCodeBlocks(mergeAdjacentLists(blocks));
+  const scrollBlocks = await scrollAndAccumulateBlocks(root);
 
+  if (dataResult && dataResult.doc.blocks.length > 0) {
+    // Upgrade incomplete tables: scroll version may have more rows due to ensureTableRowsRendered
+    const dataBlocks = [...dataResult.doc.blocks];
+    const dataTableMap = new Map<string, number>();
+    for (let i = 0; i < dataBlocks.length; i++) {
+      if (dataBlocks[i].type === "table") {
+        dataTableMap.set(hashBlock(dataBlocks[i]), i);
+      }
+    }
+    for (const scrollBlock of scrollBlocks) {
+      if (scrollBlock.type !== "table") continue;
+      const h = hashBlock(scrollBlock);
+      const idx = dataTableMap.get(h);
+      if (idx !== undefined && tableContentScore(scrollBlock) > tableContentScore(dataBlocks[idx])) {
+        dataBlocks[idx] = scrollBlock;
+      }
+    }
+
+    // Data extraction had missing blocks — append only tail blocks from scroll results
+    const dataHashes = new Set(dataBlocks.map(hashBlock));
+
+    // Find scroll position matching the last data block, then take only blocks after it
+    const lastDataHash = hashBlock(dataBlocks[dataBlocks.length - 1]);
+    let tailStartIdx = -1;
+    for (let i = scrollBlocks.length - 1; i >= 0; i--) {
+      if (hashBlock(scrollBlocks[i]) === lastDataHash) {
+        tailStartIdx = i + 1;
+        break;
+      }
+    }
+
+    // If match found, only take tail; otherwise fall back to full hash filtering
+    const candidates = tailStartIdx >= 0
+      ? scrollBlocks.slice(tailStartIdx)
+      : scrollBlocks;
+    const supplementBlocks = candidates.filter((b) => !dataHashes.has(hashBlock(b)));
+
+    if (supplementBlocks.length > 0) {
+      const combined = [...dataBlocks, ...supplementBlocks];
+      return { ...dataResult.doc, blocks: mergeAdjacentCodeBlocks(mergeAdjacentLists(combined)) };
+    }
+    return { ...dataResult.doc, blocks: dataBlocks };
+  }
+
+  // Pure scroll-based fallback
+  const mergedBlocks = mergeAdjacentCodeBlocks(mergeAdjacentLists(scrollBlocks));
   const titleEl = document.querySelector<HTMLElement>(
     "h1.page-block-content .text-editor .ace-line"
   );
