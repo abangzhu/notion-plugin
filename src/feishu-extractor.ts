@@ -751,6 +751,7 @@ const getFeishuPageData = (): BlockMap | null => {
 type DataExtractionResult = {
   doc: Doc;
   hasMissingBlocks: boolean;
+  hasDroppedBlocks: boolean;
 };
 
 const extractDocFromFeishuData = (): DataExtractionResult | null => {
@@ -762,15 +763,42 @@ const extractDocFromFeishuData = (): DataExtractionResult | null => {
   const childIds = pageBlock.data.children;
   const hasMissingBlocks = childIds.some((id) => !blockMap[id]);
 
-  const blocks = childIds
-    .map((id) => extractBlockFromData(blockMap[id]?.data, blockMap))
-    .filter((block): block is Block => Boolean(block));
+  // Types that already consume their own children internally
+  const childrenConsumedTypes = new Set(["quote_container", "table"]);
+  let droppedCount = 0;
+
+  const extractBlocksRecursive = (
+    ids: string[],
+    map: BlockMap
+  ): Block[] => {
+    const result: Block[] = [];
+    for (const id of ids) {
+      const data = map[id]?.data;
+      if (!data) { droppedCount++; continue; }
+      const block = extractBlockFromData(data, map);
+      if (block) {
+        result.push(block);
+      }
+      // Recurse into children for types that don't consume them internally
+      if (data.children?.length && !childrenConsumedTypes.has(data.type)) {
+        result.push(...extractBlocksRecursive(data.children, map));
+      } else if (!block) {
+        // No children and extraction failed → truly dropped block
+        droppedCount++;
+      }
+    }
+    return result;
+  };
+
+  const blocks = extractBlocksRecursive(childIds, blockMap);
+  const hasDroppedBlocks = droppedCount > 0;
 
   const title = pageBlock.data.text?.initialAttributedTexts?.text?.["0"]?.trim();
 
   return {
     doc: { title, blocks: mergeAdjacentCodeBlocks(mergeAdjacentLists(blocks)) },
     hasMissingBlocks,
+    hasDroppedBlocks,
   };
 };
 
@@ -904,7 +932,7 @@ export const extractDocFromFeishu = async (): Promise<Doc> => {
   // Prefer data-based extraction (complete document, bypasses virtual scrolling)
   const dataResult = extractDocFromFeishuData();
 
-  if (dataResult && dataResult.doc.blocks.length > 0 && !dataResult.hasMissingBlocks) {
+  if (dataResult && dataResult.doc.blocks.length > 0 && !dataResult.hasMissingBlocks && !dataResult.hasDroppedBlocks) {
     return dataResult.doc;
   }
 
