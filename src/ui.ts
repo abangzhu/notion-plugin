@@ -40,6 +40,8 @@ import {
   preloadImages,
   type ImageMap
 } from "./image-loader";
+import { testApiConnection } from "./translation-service";
+import type { ApiTestResult } from "./translation-service";
 
 const DRAWER_ID = "__notion_wechat_drawer";
 const DRAWER_STYLE_ID = "__notion_wechat_drawer_style";
@@ -903,15 +905,25 @@ const createDrawer = () => {
   const settingsActions = document.createElement("div");
   settingsActions.style.display = "flex";
   settingsActions.style.gap = "10px";
-  settingsActions.style.justifyContent = "flex-end";
+  settingsActions.style.justifyContent = "space-between";
+  settingsActions.style.alignItems = "center";
 
+  const settingsTestButton = createButton("测试连接", "ghost");
   const settingsCancelButton = createButton("取消", "ghost");
   const settingsSaveButton = createButton("保存设置", "primary");
+
+  const settingsRightActions = document.createElement("div");
+  settingsRightActions.style.display = "flex";
+  settingsRightActions.style.gap = "10px";
+
+  bindClickableControl(settingsTestButton);
   bindClickableControl(settingsCloseButton);
   bindClickableControl(settingsCancelButton);
   bindClickableControl(settingsSaveButton);
-  settingsActions.appendChild(settingsCancelButton);
-  settingsActions.appendChild(settingsSaveButton);
+  settingsRightActions.appendChild(settingsCancelButton);
+  settingsRightActions.appendChild(settingsSaveButton);
+  settingsActions.appendChild(settingsTestButton);
+  settingsActions.appendChild(settingsRightActions);
 
   settingsFooter.appendChild(settingsStatus);
   settingsFooter.appendChild(settingsActions);
@@ -955,6 +967,7 @@ const createDrawer = () => {
     settingsCloseButton,
     settingsCancelButton,
     settingsSaveButton,
+    settingsTestButton,
     settingsStatus,
     settingsInputs: {
       apiKeyInput,
@@ -983,6 +996,8 @@ export const initDrawer = () => {
   let activeThemeWrapper: HTMLElement | null = null;
   let activeThemeMenu: HTMLElement | null = null;
   let drawerOpenedAt = 0;
+
+  let testConnectionController: AbortController | null = null;
 
   let sourceDoc: Doc | null = null;
   let sourceHash = "";
@@ -1402,6 +1417,8 @@ export const initDrawer = () => {
 
   const closeSettings = () => {
     if (!drawerRefs) return;
+    testConnectionController?.abort();
+    testConnectionController = null;
     drawerRefs.settingsOverlay.style.display = "none";
     setSettingsStatus("");
   };
@@ -1768,6 +1785,40 @@ export const initDrawer = () => {
     });
   };
 
+  const testConnection = async () => {
+    if (!drawerRefs) return;
+    const { settingsInputs, settingsTestButton } = drawerRefs;
+    const apiKey = settingsInputs.apiKeyInput.value.trim();
+    const model = settingsInputs.modelSelect.value.trim();
+
+    if (!apiKey) {
+      setSettingsStatus("请先填写 API Key", "error");
+      return;
+    }
+    if (!model) {
+      setSettingsStatus("请先选择模型", "error");
+      return;
+    }
+
+    testConnectionController?.abort();
+    testConnectionController = new AbortController();
+
+    setButtonDisabled(settingsTestButton, true);
+    const originalLabel = settingsTestButton.textContent ?? "测试连接";
+    settingsTestButton.textContent = "测试中…";
+    setSettingsStatus("正在测试 API 连接…");
+
+    let result: ApiTestResult;
+    try {
+      result = await testApiConnection({ apiKey, model }, testConnectionController.signal);
+    } finally {
+      settingsTestButton.textContent = originalLabel;
+      setButtonDisabled(settingsTestButton, false);
+    }
+
+    setSettingsStatus(result.message, result.success ? "success" : "error");
+  };
+
   const saveSettings = async () => {
     if (!drawerRefs) return;
 
@@ -2068,6 +2119,10 @@ export const initDrawer = () => {
 
     bindPressAction(drawerRefs.settingsCloseButton, () => {
       closeSettings();
+    });
+
+    bindPressAction(drawerRefs.settingsTestButton, () => {
+      void testConnection();
     });
 
     bindPressAction(drawerRefs.settingsInputs.apiKeyToggleButton, () => {

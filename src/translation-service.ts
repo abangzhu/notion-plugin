@@ -294,3 +294,43 @@ export const translateInputs = async (params: {
 
   return translated;
 };
+
+const TEST_API_TIMEOUT_MS = 10_000;
+
+export type ApiTestResult = {
+  success: boolean;
+  message: string;
+  latencyMs?: number;
+};
+
+export const testApiConnection = async (
+  settings: Pick<TranslationSettings, "apiKey" | "model">,
+  signal: AbortSignal
+): Promise<ApiTestResult> => {
+  const client = createOpenAIClient(settings as TranslationSettings);
+  const start = Date.now();
+
+  const timeoutController = new AbortController();
+  const timeoutId = globalThis.setTimeout(() => timeoutController.abort(), TEST_API_TIMEOUT_MS);
+
+  const combinedSignal = AbortSignal.any
+    ? AbortSignal.any([signal, timeoutController.signal])
+    : timeoutController.signal;
+
+  try {
+    await client.responses.create(
+      { model: settings.model, input: "Reply with OK" },
+      { signal: combinedSignal }
+    );
+    const latencyMs = Date.now() - start;
+    return { success: true, message: `连接成功（${latencyMs}ms）`, latencyMs };
+  } catch (error) {
+    const msg = getErrorMessage(error);
+    if (signal.aborted || msg.toLowerCase().includes("abort")) {
+      return { success: false, message: "测试已取消" };
+    }
+    return { success: false, message: formatUserFriendlyError(error, settings.model) };
+  } finally {
+    clearTimeout(timeoutId);
+  }
+};
