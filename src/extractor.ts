@@ -106,6 +106,14 @@ const extractInlinesFromNode = (node: Node): Inline[] => {
   }
 
   if (isUnderlineEl(node)) {
+    // If the underline span wraps a link, recurse to preserve href
+    if (node.querySelector("a[href]")) {
+      const inlines: Inline[] = [];
+      node.childNodes.forEach((child) => {
+        inlines.push(...extractInlinesFromNode(child));
+      });
+      return inlines;
+    }
     const text = node.textContent ?? "";
     const accent = hasAccentColor(node);
     return text ? [{ type: "underline", content: text, ...(accent ? { color: "accent" } : {}) }] : [];
