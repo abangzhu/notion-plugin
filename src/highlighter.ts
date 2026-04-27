@@ -139,6 +139,7 @@ const LANGUAGE_ALIASES: Record<string, string> = {
   fish: "bash",
   plaintext: "",
   plain: "",
+  "plain text": "",
   text: "",
   txt: ""
 };
@@ -156,12 +157,17 @@ export const highlightCode = (
   try {
     const lang = normalizeLanguage(language ?? "");
 
+    // No language set or explicitly plain text → return uncolored
+    if (language === undefined || lang === "") {
+      return escapeHtml(code);
+    }
+
     let result;
-    if (lang && hljs.getLanguage(lang)) {
+    if (hljs.getLanguage(lang)) {
       result = hljs.highlight(code, { language: lang });
     } else {
       result = hljs.highlightAuto(code);
-      if (!result.language || (result.relevance ?? 0) < 2) {
+      if (!result.language || (result.relevance ?? 0) < 10) {
         return escapeHtml(code);
       }
     }

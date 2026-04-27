@@ -166,7 +166,7 @@ const normalizeLanguageName = (raw: string): string => {
 };
 
 const stripInvisibleChars = (text: string): string =>
-  text.replace(/[\u200B\u200C\u200D\uFEFF]/g, "");
+  text.replace(/[\u200B\u200C\u200D\uFEFF]/g, "").replace(/\u00a0/g, " ").replace(/\t/g, "    ");
 
 const PRISM_CLASS_HINTS: Record<string, string> = {
   environment: "bash",
@@ -202,19 +202,37 @@ const detectCodeLanguage = (preEl: HTMLElement, blockEl: HTMLElement): string | 
     if (langMatch?.[1]) return normalizeLanguageName(langMatch[1]);
   }
 
-  const langButton = blockEl.querySelector<HTMLElement>(
+  // Method 3: language selector button — try strict class-based selector first,
+  // then fall back to any [role="button"] in the block (Notion may not wrap the
+  // button inside an element whose class contains "code-block").
+  const strictBtn = blockEl.querySelector<HTMLElement>(
     '[class*="notion-code-block"] [role="button"], [class*="code-block"] [role="button"]'
   );
-  const langText = langButton?.textContent?.trim();
+  const langBtn =
+    strictBtn ??
+    Array.from(blockEl.querySelectorAll<HTMLElement>('[role="button"]')).find((btn) => {
+      const t = btn.textContent?.trim() ?? "";
+      return (
+        t.length > 0 &&
+        t.length < 30 &&
+        /^[a-zA-Z][a-zA-Z0-9#+\-. ]*$/.test(t) &&
+        !/^(copy|open|close|expand|collapse|more|options)$/i.test(t)
+      );
+    }) ??
+    null;
+  const langText = langBtn?.textContent?.trim();
   if (langText && langText.length < 30 && /^[a-zA-Z][a-zA-Z0-9#+\-. ]*$/.test(langText)) {
     return normalizeLanguageName(langText);
   }
 
-  // Method 4: search for data-language attribute on any descendant of blockEl
+  // Method 4: search for data-language attribute on any descendant of blockEl.
+  // An empty data-language attribute means the user explicitly chose "Plain Text".
   const langAttrEl = blockEl.querySelector<HTMLElement>("[data-language]");
   if (langAttrEl) {
     const lang = langAttrEl.getAttribute("data-language")?.trim();
-    if (lang) return normalizeLanguageName(lang);
+    if (lang !== undefined) {
+      return lang ? normalizeLanguageName(lang) : "plaintext";
+    }
   }
 
   // Method 5: look for language label text near the figure element
