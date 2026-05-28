@@ -562,6 +562,8 @@ const createDrawer = () => {
   toolbar.style.display = "flex";
   toolbar.style.flexDirection = "column";
   toolbar.style.gap = "12px";
+  toolbar.style.position = "relative";
+  toolbar.style.zIndex = "5";
 
   const rowTop = document.createElement("div");
   rowTop.style.display = "flex";
@@ -622,6 +624,7 @@ const createDrawer = () => {
 
   const themeWrapper = document.createElement("div");
   themeWrapper.style.position = "relative";
+  themeWrapper.style.zIndex = "30";
 
   const themeButton = document.createElement("button");
   themeButton.style.border = `2px solid ${ACCENT}`;
@@ -643,7 +646,7 @@ const createDrawer = () => {
   themeMenu.style.border = "1px solid #eee";
   themeMenu.style.padding = "8px";
   themeMenu.style.display = "none";
-  themeMenu.style.zIndex = "10";
+  themeMenu.style.zIndex = "20";
 
   themeWrapper.appendChild(themeButton);
   themeWrapper.appendChild(themeMenu);
@@ -762,6 +765,7 @@ const createDrawer = () => {
   settingsOverlay.style.background = "rgba(17,24,39,0.24)";
   settingsOverlay.style.backdropFilter = "blur(4px)";
   settingsOverlay.style.padding = "16px";
+  settingsOverlay.style.zIndex = "50";
 
   const settingsPanel = document.createElement("div");
   settingsPanel.style.width = "430px";
