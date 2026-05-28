@@ -636,9 +636,7 @@ const createDrawer = () => {
   themeButton.style.cursor = "pointer";
 
   const themeMenu = document.createElement("div");
-  themeMenu.style.position = "absolute";
-  themeMenu.style.top = "46px";
-  themeMenu.style.left = "0";
+  themeMenu.style.position = "fixed";
   themeMenu.style.width = "180px";
   themeMenu.style.background = "#fff";
   themeMenu.style.borderRadius = "14px";
@@ -646,7 +644,7 @@ const createDrawer = () => {
   themeMenu.style.border = "1px solid #eee";
   themeMenu.style.padding = "8px";
   themeMenu.style.display = "none";
-  themeMenu.style.zIndex = "20";
+  themeMenu.style.zIndex = "40";
 
   themeWrapper.appendChild(themeButton);
   themeWrapper.appendChild(themeMenu);
@@ -2024,8 +2022,15 @@ export const initDrawer = () => {
 
     drawerRefs.themeButton.addEventListener("click", (event) => {
       event.stopPropagation();
-      drawerRefs!.themeMenu.style.display =
-        drawerRefs!.themeMenu.style.display === "none" ? "block" : "none";
+      const menu = drawerRefs!.themeMenu;
+      if (menu.style.display !== "none") {
+        menu.style.display = "none";
+        return;
+      }
+      const rect = drawerRefs!.themeButton.getBoundingClientRect();
+      menu.style.top = `${rect.bottom + 6}px`;
+      menu.style.left = `${rect.left}px`;
+      menu.style.display = "block";
     });
 
     THEME_PRESETS.forEach((preset) => {
