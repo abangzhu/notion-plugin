@@ -6,6 +6,8 @@
   "permissions": ["activeTab", "clipboardRead", "clipboardWrite", "scripting", "storage"],
   "host_permissions": [
     "https://www.notion.so/*",
+    "https://app.notion.com/*",
+    "https://www.notion.com/*",
     "https://*.notion.site/*",
     "https://secure.notion-static.com/*",
     "https://*.secure.notion-static.com/*",
@@ -28,6 +30,9 @@
     {
       "matches": [
         "https://www.notion.so/*",
+        "https://app.notion.com/*",
+        "https://www.notion.com/*",
+        "https://*.notion.site/*",
         "https://*.feishu.cn/*",
         "https://*.larksuite.com/*"
       ],

@@ -9,7 +9,13 @@ const NOTION_PAGE_ID_PATTERN = /[0-9a-f]{32}|[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9
 export const detectPlatform = (): Platform => {
   const { hostname, pathname } = window.location;
 
-  if (hostname === "www.notion.so" || hostname.endsWith(".notion.site")) {
+  if (
+    hostname === "www.notion.so" ||
+    hostname === "notion.so" ||
+    hostname === "app.notion.com" ||
+    hostname === "www.notion.com" ||
+    hostname.endsWith(".notion.site")
+  ) {
     return "notion";
   }
 
