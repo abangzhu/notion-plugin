@@ -72,6 +72,86 @@ type TranslationCacheEntry = {
 const THEME_PRESETS: ThemePreset[] = [
   { id: "default", label: "默认主题", colors: {}, typography: { letterSpacing: "0.1em" } },
   {
+    id: "notion",
+    label: "Notion 白",
+    colors: {
+      text: "#2f3437",
+      subText: "#6b6f72",
+      link: "#0f6bff",
+      border: "#d9d9d6",
+      divider: "#e9e9e7",
+      codeBg: "#f7f6f3",
+      inlineCodeBg: "#efefed"
+    },
+    typography: {
+      bodySize: "15px",
+      bodyLineHeight: "27px",
+      bodyMarginBottom: "12px",
+      headingWeight: "700",
+      letterSpacing: "0"
+    }
+  },
+  {
+    id: "matcha",
+    label: "抹茶计划",
+    colors: {
+      text: "#263229",
+      subText: "#657368",
+      link: "#4d7c59",
+      border: "#b9d4b8",
+      divider: "#dbe8d8",
+      codeBg: "#f2f8ef",
+      inlineCodeBg: "#e7f1e3"
+    },
+    typography: {
+      bodySize: "15px",
+      bodyLineHeight: "28px",
+      bodyMarginBottom: "12px",
+      headingWeight: "700",
+      letterSpacing: "0.03em"
+    }
+  },
+  {
+    id: "academia",
+    label: "学院档案",
+    colors: {
+      text: "#372f27",
+      subText: "#786a5d",
+      link: "#8a5a2b",
+      border: "#c8ac7a",
+      divider: "#eadcc5",
+      codeBg: "#f8f1e6",
+      inlineCodeBg: "#efe3d0"
+    },
+    typography: {
+      bodySize: "15px",
+      bodyLineHeight: "28px",
+      bodyMarginBottom: "12px",
+      headingWeight: "700",
+      letterSpacing: "0.04em"
+    }
+  },
+  {
+    id: "bento",
+    label: "Bento OS",
+    colors: {
+      text: "#172033",
+      subText: "#647086",
+      link: "#2563eb",
+      border: "#cbd5e1",
+      divider: "#e2e8f0",
+      codeBg: "#f8fafc",
+      inlineCodeBg: "#eef2ff"
+    },
+    typography: {
+      bodySize: "15px",
+      bodyLineHeight: "27px",
+      bodyMarginBottom: "11px",
+      headingWeight: "700",
+      letterSpacing: "0"
+    }
+  },
+  {
     id: "red",
     label: "活力橙",
     colors: {
@@ -644,10 +724,12 @@ const createDrawer = () => {
   themeMenu.style.border = "1px solid #eee";
   themeMenu.style.padding = "8px";
   themeMenu.style.display = "none";
-  themeMenu.style.zIndex = "40";
+  themeMenu.style.zIndex = "2147483647";
+  themeMenu.style.maxHeight = "min(420px, calc(100vh - 96px))";
+  themeMenu.style.overflowY = "auto";
+  themeMenu.style.boxSizing = "border-box";
 
   themeWrapper.appendChild(themeButton);
-  themeWrapper.appendChild(themeMenu);
 
   const fontSegment = document.createElement("div");
   fontSegment.style.display = "flex";
@@ -1986,6 +2068,7 @@ export const initDrawer = () => {
     translationPort = null;
     cancelImagePreload();
     imageMap = new Map();
+    drawerRefs?.themeMenu.remove();
     activeThemeMenu = null;
     activeThemeWrapper = null;
 
@@ -2028,8 +2111,10 @@ export const initDrawer = () => {
         return;
       }
       const rect = drawerRefs!.themeButton.getBoundingClientRect();
+      const menuWidth = 180;
+      const left = Math.min(rect.left, Math.max(8, window.innerWidth - menuWidth - 8));
       menu.style.top = `${rect.bottom + 6}px`;
-      menu.style.left = `${rect.left}px`;
+      menu.style.left = `${left}px`;
       menu.style.display = "block";
     });
 
@@ -2047,7 +2132,8 @@ export const initDrawer = () => {
       item.addEventListener("mouseleave", () => {
         item.style.background = "transparent";
       });
-      item.addEventListener("click", () => {
+      item.addEventListener("click", (event) => {
+        event.stopPropagation();
         currentTheme = preset;
         updateThemeButton();
         updateThemeMenu();
@@ -2227,11 +2313,19 @@ export const initDrawer = () => {
       document.addEventListener("click", (event) => {
         const target = event.target as Node;
 
-        if (activeThemeWrapper && activeThemeMenu && !activeThemeWrapper.contains(target)) {
+        const clickedThemeMenu = Boolean(activeThemeMenu?.contains(target));
+        const clickedThemeButton = Boolean(activeThemeWrapper?.contains(target));
+
+        if (activeThemeMenu && !clickedThemeButton && !clickedThemeMenu) {
           activeThemeMenu.style.display = "none";
         }
 
-        if (drawer && !drawer.contains(target) && Date.now() - drawerOpenedAt > 300) {
+        if (
+          drawer &&
+          !drawer.contains(target) &&
+          !clickedThemeMenu &&
+          Date.now() - drawerOpenedAt > 300
+        ) {
           closeDrawer();
         }
       });
@@ -2268,6 +2362,7 @@ export const initDrawer = () => {
     }
 
     document.body.appendChild(drawer);
+    document.body.appendChild(drawerRefs.themeMenu);
 
     // 如果有缓存内容，立即渲染到新 drawer DOM，避免重新提取期间空白
     if (sourceDoc) {

@@ -132,7 +132,13 @@ const CODE_COLORS_LIGHT: CodeHighlightColors = {
 };
 
 export const getCodeHighlightColors = (themeId?: string): CodeHighlightColors =>
-  themeId === "red" ? CODE_COLORS_LIGHT : CODE_COLORS_DARK;
+  themeId === "red" ||
+  themeId === "notion" ||
+  themeId === "matcha" ||
+  themeId === "academia" ||
+  themeId === "bento"
+    ? CODE_COLORS_LIGHT
+    : CODE_COLORS_DARK;
 
 export const mergeRenderOptions = (overrides?: Partial<RenderOptions>): RenderOptions => {
   if (!overrides) return DEFAULT_RENDER_OPTIONS;

@@ -98,7 +98,10 @@ const inlineToHtml = (
   const isBlue = options.themeId === "blue";
   const isBlack = options.themeId === "black";
   const isSspai = options.themeId === "sspai";
-  const isAccentTheme = isPineapple || isBlue || isSspai;
+  const isMatcha = options.themeId === "matcha";
+  const isAcademia = options.themeId === "academia";
+  const isBento = options.themeId === "bento";
+  const isAccentTheme = isPineapple || isBlue || isSspai || isMatcha || isBento;
   const inlineAccent = "color" in inline && inline.color === "accent";
   switch (inline.type) {
     case "text":
@@ -125,7 +128,7 @@ const inlineToHtml = (
       const href = normalizeHref(inline.href);
       const index = indexMap?.get(href);
       const sup = index ? `<sup style="font-size:0.8em;">[${index}]</sup>` : "";
-      return `<a href="${escapeHtml(href)}" style="color:${options.colors.link};${isAccentTheme || isBlack ? "text-decoration:none;border-bottom:1px solid " + options.colors.link + ";" : "text-decoration:underline;"}">${escapeHtml(
+      return `<a href="${escapeHtml(href)}" style="color:${options.colors.link};${isAccentTheme || isBlack || isAcademia ? "text-decoration:none;border-bottom:1px solid " + options.colors.link + ";" : "text-decoration:underline;"}">${escapeHtml(
         inline.content
       )}${sup}</a>`;
     default:
@@ -140,7 +143,7 @@ const inlinesToHtml = (
 ): string => inlines.map((inline) => inlineToHtml(inline, options, indexMap)).join("");
 
 const buildBodyParagraphStyle = (options: RenderOptions, color?: string): string =>
-  `font-family:${options.fontStack};font-size:${options.typography.bodySize};line-height:${options.typography.bodyLineHeight};margin:10px 0;color:${color ?? options.colors.text};font-weight:${options.typography.bodyWeight};${options.typography.letterSpacing ? `letter-spacing:${options.typography.letterSpacing};` : ""}text-align:left;white-space:pre-line;min-height:20px;padding-left:0em;`;
+  `font-family:${options.fontStack};font-size:${options.typography.bodySize};line-height:${options.typography.bodyLineHeight};margin:0 0 ${options.typography.bodyMarginBottom};color:${color ?? options.colors.text};font-weight:${options.typography.bodyWeight};${options.typography.letterSpacing ? `letter-spacing:${options.typography.letterSpacing};` : ""}text-align:left;white-space:pre-line;min-height:20px;padding-left:0em;`;
 
 const listItemToHtml = (
   item: ListItem,
@@ -170,12 +173,25 @@ const listToHtml = (
   const listStyleType = list.ordered
     ? orderedStyles[Math.min(depth, orderedStyles.length - 1)]
     : unorderedStyles[Math.min(depth, unorderedStyles.length - 1)];
-  const isAccentTheme = options.themeId === "red" || options.themeId === "blue" || options.themeId === "sspai";
+  const isAccentTheme =
+    options.themeId === "red" ||
+    options.themeId === "blue" ||
+    options.themeId === "sspai" ||
+    options.themeId === "matcha" ||
+    options.themeId === "bento";
   const itemTextColor = !list.ordered && isAccentTheme ? options.colors.text : options.colors.text;
+  const extraStyle =
+    options.themeId === "bento"
+      ? `margin:14px 0;padding-left:1.75em;border-left:3px solid ${options.colors.divider};`
+      : options.themeId === "matcha"
+        ? `margin:14px 0;padding-left:1.65em;color:${options.colors.link};`
+        : options.themeId === "academia"
+          ? `margin:14px 0;padding-left:1.65em;`
+          : "padding-left:1.5em;";
   const listItems = list.items
     .map((item) => listItemToHtml(item, options, depth, indexMap, itemTextColor, imageMap))
     .join("");
-  return `<${tag} style="list-style-type: ${listStyleType};padding-left:1.5em;list-style-position:outside;" class="list-paddingleft-1">${listItems}</${tag}>`;
+  return `<${tag} style="list-style-type:${listStyleType};${extraStyle}list-style-position:outside;" class="list-paddingleft-1">${listItems}</${tag}>`;
 };
 
 const tableToHtml = (
@@ -186,15 +202,34 @@ const tableToHtml = (
   const rows = table.rows;
   const columnCount = rows.reduce((max, row) => Math.max(max, row.cells.length), 0) || 1;
   const widthPercent = Math.floor(100 / columnCount);
+  const isNotion = options.themeId === "notion";
+  const isMatcha = options.themeId === "matcha";
+  const isAcademia = options.themeId === "academia";
+  const isBento = options.themeId === "bento";
+  const headerBackground = isMatcha
+    ? "#eef7ec"
+    : isAcademia
+      ? "#f3e7d2"
+      : isBento
+        ? "#eef4ff"
+        : isNotion
+          ? "#f7f6f3"
+          : "#f5f5f5";
+  const bodyBackground = isAcademia ? "#fffaf1" : "#ffffff";
+  const borderColor = options.colors.divider;
+  const tableBorderStyle = isBento
+    ? `border:1px solid ${borderColor};border-radius:8px;overflow:hidden;`
+    : `border:1px solid ${borderColor};`;
   const tbody = rows
     .map((row) => {
       const isHeader = row.isHeader === true;
       const cellTag = isHeader ? "th" : "td";
-      const headerBg = isHeader ? "background:#f5f5f5;" : "";
+      const headerBg = isHeader ? `background:${headerBackground};` : `background:${bodyBackground};`;
       const headerWeight = isHeader ? "font-weight:700;" : "";
       const cells = row.cells
         .map((cell) => {
-          return `<${cellTag} style="word-break:break-all;font-family:${options.fontStack};font-size:${options.typography.bodySize};vertical-align:top;width:${widthPercent}%;border:1px solid ${options.colors.divider};padding:6px 8px;${headerBg}${headerWeight}${options.typography.letterSpacing ? `letter-spacing:${options.typography.letterSpacing};` : ""}">${inlinesToHtml(
+          const cellPadding = isBento ? "10px 12px" : isAcademia ? "8px 10px" : "6px 8px";
+          return `<${cellTag} style="word-break:break-all;font-family:${options.fontStack};font-size:${options.typography.bodySize};vertical-align:top;width:${widthPercent}%;border:1px solid ${borderColor};padding:${cellPadding};${headerBg}${headerWeight}${options.typography.letterSpacing ? `letter-spacing:${options.typography.letterSpacing};` : ""}">${inlinesToHtml(
             cell.children,
             options,
             indexMap
@@ -205,7 +240,7 @@ const tableToHtml = (
     })
     .join("");
 
-  return `<table style="font-size:${options.typography.bodySize};margin:10px 0;line-height:${options.typography.bodyLineHeight};border-collapse:collapse;width:100%;border:1px solid ${options.colors.divider};">${tbody}</table>`;
+  return `<table style="font-size:${options.typography.bodySize};margin:${isBento ? "18px 0" : "12px 0"};line-height:${options.typography.bodyLineHeight};border-collapse:collapse;width:100%;${tableBorderStyle}">${tbody}</table>`;
 };
 
 const blockToHtml = (
@@ -222,10 +257,90 @@ const blockToHtml = (
   const isBlue = options.themeId === "blue";
   const isBlack = options.themeId === "black";
   const isSspai = options.themeId === "sspai";
+  const isNotion = options.themeId === "notion";
+  const isMatcha = options.themeId === "matcha";
+  const isAcademia = options.themeId === "academia";
+  const isBento = options.themeId === "bento";
   const isAccentTheme = isPineapple || isBlue;
   switch (block.type) {
     case "heading": {
       const tag = block.level === 1 ? "h1" : block.level === 2 ? "h2" : "h3";
+      if (isNotion) {
+        const fontSize =
+          block.level === 1 ? `${h1Size}px` : block.level === 2 ? `${h2Size}px` : `${h3Size}px`;
+        const margin =
+          block.level === 1
+            ? `0 0 ${Math.round(baseSize * 1.8)}px`
+            : `${Math.round(baseSize * 1.7)}px 0 ${Math.round(baseSize * 0.7)}px`;
+        return `<${tag} style="font-family:${options.fontStack};font-size:${fontSize};font-weight:700;margin:${margin};line-height:1.35;color:${options.colors.text};letter-spacing:0;">${inlinesToHtml(
+          block.children,
+          options,
+          indexMap
+        )}</${tag}>`;
+      }
+      if (isMatcha) {
+        if (block.level === 1) {
+          return `<${tag} style="font-family:${options.fontStack};font-size:${h1Size}px;font-weight:700;line-height:1.45;margin:0 0 ${Math.round(baseSize * 2)}px;color:${options.colors.text};padding:0 0 10px;border-bottom:2px solid ${options.colors.border};">${inlinesToHtml(
+            block.children,
+            options,
+            indexMap
+          )}</${tag}>`;
+        }
+        if (block.level === 2) {
+          return `<${tag} style="font-family:${options.fontStack};font-size:${h2Size}px;font-weight:700;line-height:1.45;margin:${Math.round(baseSize * 2.2)}px 0 ${Math.round(baseSize * 1)}px;color:${options.colors.text};padding:2px 0 2px 12px;border-left:4px solid ${options.colors.link};background:#f7fbf4;">${inlinesToHtml(
+            block.children,
+            options,
+            indexMap
+          )}</${tag}>`;
+        }
+        return `<${tag} style="font-family:${options.fontStack};font-size:${h3Size}px;font-weight:700;line-height:1.45;margin:${Math.round(baseSize * 1.8)}px 0 ${Math.round(baseSize * 0.8)}px;color:${options.colors.link};">${inlinesToHtml(
+          block.children,
+          options,
+          indexMap
+        )}</${tag}>`;
+      }
+      if (isAcademia) {
+        if (block.level === 1) {
+          return `<${tag} style="font-family:${options.fontStack};font-size:${h1Size}px;font-weight:700;line-height:1.45;margin:0 0 ${Math.round(baseSize * 2.1)}px;color:${options.colors.text};text-align:center;padding:0 0 12px;border-bottom:1px solid ${options.colors.border};">${inlinesToHtml(
+            block.children,
+            options,
+            indexMap
+          )}</${tag}>`;
+        }
+        if (block.level === 2) {
+          return `<${tag} style="font-family:${options.fontStack};font-size:${h2Size}px;font-weight:700;line-height:1.45;margin:${Math.round(baseSize * 2.4)}px 0 ${Math.round(baseSize)}px;color:${options.colors.link};">${inlinesToHtml(
+            block.children,
+            options,
+            indexMap
+          )}</${tag}>`;
+        }
+        return `<${tag} style="font-family:${options.fontStack};font-size:${h3Size}px;font-weight:700;line-height:1.45;margin:${Math.round(baseSize * 1.8)}px 0 ${Math.round(baseSize * 0.8)}px;color:${options.colors.text};padding-left:10px;border-left:3px solid ${options.colors.border};">${inlinesToHtml(
+          block.children,
+          options,
+          indexMap
+        )}</${tag}>`;
+      }
+      if (isBento) {
+        if (block.level === 1) {
+          return `<${tag} style="font-family:${options.fontStack};font-size:${h1Size}px;font-weight:800;line-height:1.35;margin:0 0 ${Math.round(baseSize * 2)}px;color:${options.colors.text};padding:0 0 12px;border-bottom:1px solid ${options.colors.divider};">${inlinesToHtml(
+            block.children,
+            options,
+            indexMap
+          )}</${tag}>`;
+        }
+        if (block.level === 2) {
+          return `<${tag} style="font-family:${options.fontStack};font-size:${h2Size}px;font-weight:800;line-height:1.35;margin:${Math.round(baseSize * 2)}px 0 ${Math.round(baseSize)}px;color:${options.colors.text};padding:8px 12px;background:#f8fafc;border:1px solid ${options.colors.divider};border-left:4px solid ${options.colors.link};border-radius:8px;">${inlinesToHtml(
+            block.children,
+            options,
+            indexMap
+          )}</${tag}>`;
+        }
+        return `<${tag} style="font-family:${options.fontStack};font-size:${h3Size}px;font-weight:700;line-height:1.4;margin:${Math.round(baseSize * 1.6)}px 0 ${Math.round(baseSize * 0.7)}px;color:${options.colors.link};">${inlinesToHtml(
+          block.children,
+          options,
+          indexMap
+        )}</${tag}>`;
+      }
       if (isSspai) {
         if (block.level === 1) {
           return `<${tag} style="line-height:1.5;font-size:${h1Size}px;font-family:${options.fontStack};font-weight:700;margin:0 auto ${Math.round(baseSize * 2.6)}px 0;width:fit-content;border-left:6px solid ${options.colors.link};padding-left:6px;color:${options.colors.text};">${inlinesToHtml(
@@ -314,6 +429,34 @@ const blockToHtml = (
         indexMap
       )}</p>`;
     case "quote":
+      if (isNotion) {
+        return `<blockquote style="font-family:${options.fontStack};border-left:3px solid ${options.colors.border};padding:2px 0 2px 14px;margin:18px 0;color:${options.colors.subText};line-height:${options.typography.bodyLineHeight};font-size:${options.typography.bodySize};">${inlinesToHtml(
+          block.children,
+          options,
+          indexMap
+        )}</blockquote>`;
+      }
+      if (isMatcha) {
+        return `<blockquote style="font-family:${options.fontStack};border-left:4px solid ${options.colors.link};padding:12px 14px;margin:20px 0;background:#f5faf2;color:${options.colors.text};line-height:${options.typography.bodyLineHeight};font-size:${options.typography.bodySize};">${inlinesToHtml(
+          block.children,
+          options,
+          indexMap
+        )}</blockquote>`;
+      }
+      if (isAcademia) {
+        return `<blockquote style="font-family:${options.fontStack};border-top:1px solid ${options.colors.border};border-bottom:1px solid ${options.colors.border};padding:14px 8px;margin:22px 0;background:#fffaf1;color:${options.colors.subText};line-height:${options.typography.bodyLineHeight};font-size:${options.typography.bodySize};font-style:italic;">${inlinesToHtml(
+          block.children,
+          options,
+          indexMap
+        )}</blockquote>`;
+      }
+      if (isBento) {
+        return `<blockquote style="font-family:${options.fontStack};border:1px solid ${options.colors.divider};border-left:4px solid ${options.colors.link};border-radius:8px;padding:12px 14px;margin:20px 0;background:#f8fafc;color:${options.colors.text};line-height:${options.typography.bodyLineHeight};font-size:${options.typography.bodySize};">${inlinesToHtml(
+          block.children,
+          options,
+          indexMap
+        )}</blockquote>`;
+      }
       if (isBlack) {
         return `<blockquote style="font-family:${options.fontStack};border-left:8px solid ${options.colors.border};padding:10px;margin:20px 0;background-color:#f5f5f5;color:${options.colors.subText};line-height:${options.typography.bodyLineHeight};">${inlinesToHtml(
           block.children,
@@ -336,6 +479,18 @@ const blockToHtml = (
     case "callout": {
       const icon = escapeHtml((block.icon || "💡").trim() || "💡");
       const inner = inlinesToHtml(block.children, options, indexMap) || "<br/>";
+      if (isNotion) {
+        return `<section style="margin:16px 0;padding:12px 14px;background:${options.colors.codeBg};border-radius:6px;color:${options.colors.text};font-family:${options.fontStack};line-height:${options.typography.bodyLineHeight};font-size:${options.typography.bodySize};${options.typography.letterSpacing ? `letter-spacing:${options.typography.letterSpacing};` : ""}"><p style="margin:0;"><strong style="margin-right:8px;">${icon}</strong>${inner}</p></section>`;
+      }
+      if (isMatcha) {
+        return `<section style="margin:16px 0;padding:12px 14px;background:#f2f8ef;border:1px solid ${options.colors.border};border-left:4px solid ${options.colors.link};border-radius:6px;color:${options.colors.text};font-family:${options.fontStack};line-height:${options.typography.bodyLineHeight};font-size:${options.typography.bodySize};${options.typography.letterSpacing ? `letter-spacing:${options.typography.letterSpacing};` : ""}"><p style="margin:0;"><strong style="margin-right:8px;color:${options.colors.link};">${icon}</strong>${inner}</p></section>`;
+      }
+      if (isAcademia) {
+        return `<section style="margin:18px 0;padding:12px 14px;background:#fbf4e8;border:1px solid ${options.colors.divider};border-top:3px solid ${options.colors.border};color:${options.colors.text};font-family:${options.fontStack};line-height:${options.typography.bodyLineHeight};font-size:${options.typography.bodySize};${options.typography.letterSpacing ? `letter-spacing:${options.typography.letterSpacing};` : ""}"><p style="margin:0;"><strong style="margin-right:8px;color:${options.colors.link};">${icon}</strong>${inner}</p></section>`;
+      }
+      if (isBento) {
+        return `<section style="margin:16px 0;padding:14px;background:#f8fafc;border:1px solid ${options.colors.divider};border-radius:8px;box-shadow:0 1px 0 rgba(15,23,42,0.04);color:${options.colors.text};font-family:${options.fontStack};line-height:${options.typography.bodyLineHeight};font-size:${options.typography.bodySize};${options.typography.letterSpacing ? `letter-spacing:${options.typography.letterSpacing};` : ""}"><p style="margin:0;"><strong style="margin-right:8px;color:${options.colors.link};">${icon}</strong>${inner}</p></section>`;
+      }
       if (isBlack) {
         return `<section style="margin:16px 0;padding:10px 12px;background:#f5f5f5;border-left:8px solid ${options.colors.border};color:${options.colors.text};font-family:${options.fontStack};line-height:${options.typography.bodyLineHeight};font-size:${options.typography.bodySize};${options.typography.letterSpacing ? `letter-spacing:${options.typography.letterSpacing};` : ""}"><p style="margin:0;"><strong style="margin-right:6px;">${icon}</strong>${inner}</p></section>`;
       }
@@ -345,12 +500,21 @@ const blockToHtml = (
       return `<section style="margin:16px 0;padding:10px 12px;background:${options.colors.codeBg};border-left:3px solid ${options.colors.border};border-radius:4px;color:${options.colors.text};font-family:${options.fontStack};line-height:${options.typography.bodyLineHeight};font-size:${options.typography.bodySize};${options.typography.letterSpacing ? `letter-spacing:${options.typography.letterSpacing};` : ""}"><p style="margin:0;"><strong style="margin-right:6px;color:${isAccentTheme ? options.colors.link : options.colors.text};">${icon}</strong>${inner}</p></section>`;
     }
     case "divider":
+      if (isNotion || isMatcha || isAcademia || isBento) {
+        const dividerMargin = isBento ? "22px 0" : isAcademia ? "24px 0" : "20px 0";
+        const dividerColor = isAcademia ? options.colors.border : options.colors.divider;
+        return `<hr style="border:none;border-top:1px solid ${dividerColor};margin:${dividerMargin};" />`;
+      }
       return isAccentTheme || isBlack || isSspai
         ? `<hr style="border-style:solid;border-width:1px 0 0;border-color:${options.colors.divider};transform-origin:0 0;transform:scale(1,${isSspai ? "1" : "0.5"});margin:${isSspai ? "15px 0" : "16px 0"};" />`
         : `<hr style="border:none;border-top:1px solid ${options.colors.divider};margin:16px 0;" />`;
     case "image": {
       const imgSrc = imageMap?.get(block.src) ?? block.src;
-      return `<p style="text-align:center;margin:16px 0;"><img src="${escapeHtml(imgSrc)}" alt="${escapeHtml(block.alt ?? "")}" style="max-width:100%;border-radius:6px;" /></p>`;
+      const imageRadius = isAcademia ? "0" : isBento ? "8px" : "6px";
+      const imageMargin = isBento || isAcademia ? "22px 0" : "16px 0";
+      const imageBorder =
+        isAcademia || isBento || isMatcha ? `border:1px solid ${options.colors.divider};` : "";
+      return `<p style="text-align:center;margin:${imageMargin};"><img src="${escapeHtml(imgSrc)}" alt="${escapeHtml(block.alt ?? "")}" style="max-width:100%;border-radius:${imageRadius};${imageBorder}" /></p>`;
     }
     case "code": {
       const langLabel = block.language ?? "";
@@ -360,6 +524,15 @@ const blockToHtml = (
       const langAttr = langLabel ? ` data-language-pending="${escapeHtml(langLabel)}"` : "";
       if (isPineapple) {
         return `<pre style="color:#333;background:#fafafa;font-size:90%;overflow-x:auto;border-radius:8px;line-height:1.5;margin:10px 8px;padding:0px !important;border:1px solid #f0f0f0;box-shadow:0 2px 10px rgba(0,0,0,0.3);">${macDots}<code${langAttr} style="font-size:90%;border-radius:4px;display:block;padding:0.5em 1em 1em;overflow-x:auto;text-indent:0px;color:inherit;background:none;white-space:pre;margin:0px;font-family:Menlo, Monaco, Consolas, monospace;">${highlighted}</code></pre>`;
+      }
+      if (isNotion || isMatcha || isAcademia || isBento) {
+        const codeTextColor = isAcademia ? "#4f3f30" : "#24292f";
+        const codeBorder = isBento
+          ? `border:1px solid ${options.colors.divider};`
+          : isAcademia || isMatcha || isNotion
+            ? `border:1px solid ${options.colors.divider};`
+            : "";
+        return `<pre style="color:${codeTextColor};background:${options.colors.codeBg};font-size:90%;overflow-x:auto;border-radius:${isAcademia ? "0" : "8px"};line-height:1.5;margin:14px 0;padding:0px !important;${codeBorder}">${macDots}<code${langAttr} style="font-size:90%;border-radius:4px;display:block;padding:0.5em 1em 1em;overflow-x:auto;text-indent:0px;color:inherit;background:none;white-space:pre;margin:0px;font-family:Menlo, Monaco, Consolas, monospace;">${highlighted}</code></pre>`;
       }
       return `<pre style="color:rgb(201,209,217);background:rgb(13,17,23);font-size:90%;overflow-x:auto;border-radius:8px;line-height:1.5;margin:10px 8px;padding:0px !important;">${macDots}<code${langAttr} style="font-size:90%;border-radius:4px;display:block;padding:0.5em 1em 1em;overflow-x:auto;text-indent:0px;color:inherit;background:none;white-space:pre;margin:0px;font-family:Menlo, Monaco, Consolas, monospace;">${highlighted}</code></pre>`;
     }

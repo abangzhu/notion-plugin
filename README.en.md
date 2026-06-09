@@ -14,7 +14,7 @@ A Chrome Extension that converts Notion / Feishu (Lark) pages into publishable c
 - Settings panel for OpenAI API Key, ChatGPT model series, target language, audience, style presets, glossary, and more
 - Model list from [`src/translation-models.json`](./src/translation-models.json), easily extensible
 - Translation prompt templates in `src/prompts/`, developers can adjust prompts and constraints directly
-- 5 built-in themes: `Default`, `Vibrant Orange`, `Ocean Blue`, `Tech Black`, `Magic Red`
+- 9 built-in themes: `Default`, `Notion White`, `Matcha Planner`, `Academia Archive`, `Bento OS`, `Vibrant Orange`, `Ocean Blue`, `Tech Black`, `Magic Red`
 - Font switching and font size scaling
 - Automatic link reference numbering (inline `[n]` + footnote references)
 - Real-time preview in a slide-out drawer
