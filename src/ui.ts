@@ -70,7 +70,7 @@ type TranslationCacheEntry = {
 };
 
 const THEME_PRESETS: ThemePreset[] = [
-  { id: "default", label: "默认主题", colors: {}, typography: { letterSpacing: "0.1em" } },
+  { id: "default", label: "默认主题", colors: {}, typography: { letterSpacing: "0.02em" } },
   {
     id: "notion",
     label: "Notion 白",
@@ -159,14 +159,14 @@ const THEME_PRESETS: ThemePreset[] = [
       subText: "#808a87",
       link: "#fc7930",
       border: "#f7cfba",
-      divider: "#797979"
+      divider: "#f0d9cc"
     },
     typography: {
       bodySize: "15px",
       bodyLineHeight: "26px",
       bodyMarginBottom: "10px",
       headingWeight: "700",
-      letterSpacing: "0.1em"
+      letterSpacing: "0.02em"
     }
   },
   {
@@ -177,18 +177,21 @@ const THEME_PRESETS: ThemePreset[] = [
       subText: "#808a87",
       link: "#5296d4",
       border: "#c3d7df",
-      divider: "#797979"
+      divider: "#cfe0ea"
+    },
+    typography: {
+      letterSpacing: "0.02em"
     }
   },
   {
     id: "black",
     label: "科技黑",
     colors: {
-      text: "#3f3f3f",
-      subText: "#3f3f3f",
-      link: "#222222",
-      border: "#222222",
-      divider: "#797979"
+      text: "#1a1a1a",
+      subText: "#57606a",
+      link: "#c8472b",
+      border: "#1a1a1a",
+      divider: "#d9d9d9"
     }
   },
   {
@@ -199,10 +202,10 @@ const THEME_PRESETS: ThemePreset[] = [
       subText: "#8c8c8c",
       link: "#f22f27",
       border: "#f22f27",
-      divider: "#f22f27"
+      divider: "#f0d2d0"
     },
     typography: {
-      bodyLineHeight: "1.75"
+      bodyLineHeight: "28px"
     }
   }
 ];

@@ -26,6 +26,14 @@ const sanitizeCssColor = (value: string): string => {
 
 const normalizeHref = (href: string): string => href.trim();
 
+const hostnameOf = (href: string): string => {
+  try {
+    return new URL(href).hostname.replace(/^www\./, "");
+  } catch {
+    return href;
+  }
+};
+
 const collectReferencesFromInlines = (
   inlines: Inline[],
   items: ReferenceItem[],
@@ -108,10 +116,13 @@ const inlineToHtml = (
       return inlineAccent
         ? `<span style="color:${options.colors.link};">${escapeHtml(inline.content)}</span>`
         : escapeHtml(inline.content);
-    case "bold":
-      return `<strong style="font-weight:600;${isAccentTheme || inlineAccent ? `word-break:break-all;color:${options.colors.link};` : ""}">${escapeHtml(
+    case "bold": {
+      // 加粗默认仅 font-weight，不整体染强调色；只有 Notion 真彩色文本或主题显式开启时才染色
+      const boldAccent = inlineAccent || options.style.accentOnBold;
+      return `<strong style="font-weight:600;${boldAccent ? `word-break:break-all;color:${options.colors.link};` : ""}">${escapeHtml(
         inline.content
       )}</strong>`;
+    }
     case "italic":
       return `<em style="font-style:italic;${inlineAccent ? `color:${options.colors.link};` : ""}">${escapeHtml(
         inline.content
@@ -144,6 +155,65 @@ const inlinesToHtml = (
 
 const buildBodyParagraphStyle = (options: RenderOptions, color?: string): string =>
   `font-family:${options.fontStack};font-size:${options.typography.bodySize};line-height:${options.typography.bodyLineHeight};margin:0 0 ${options.typography.bodyMarginBottom};color:${color ?? options.colors.text};font-weight:${options.typography.bodyWeight};${options.typography.letterSpacing ? `letter-spacing:${options.typography.letterSpacing};` : ""}text-align:left;white-space:pre-line;min-height:20px;padding-left:0em;`;
+
+// 由 StyleTokens.headings 驱动的标题渲染，覆盖 default / red / blue / black / sspai。
+// notion/matcha/academia/bento 的标题在 blockToHtml 内有各自分支，不经此函数。
+const headingToHtml = (
+  block: Extract<Block, { type: "heading" }>,
+  options: RenderOptions,
+  indexMap?: Map<string, number>
+): string => {
+  const tag = block.level === 1 ? "h1" : block.level === 2 ? "h2" : "h3";
+  const baseSize = Number.parseFloat(options.typography.bodySize) || 16;
+  const hs =
+    block.level === 1
+      ? options.style.headings.h1
+      : block.level === 2
+        ? options.style.headings.h2
+        : options.style.headings.h3;
+  const fontSize = Math.round(baseSize * hs.scale);
+  const weight = hs.weight ?? options.typography.headingWeight;
+  const color =
+    hs.colorKey === "link"
+      ? options.colors.link
+      : hs.colorKey === "subText"
+        ? options.colors.subText
+        : options.colors.text;
+  const accent = hs.accentColorKey === "border" ? options.colors.border : options.colors.link;
+  const mt = Math.round(baseSize * hs.marginTopEm);
+  const mb = Math.round(baseSize * hs.marginBottomEm);
+  const center = hs.align === "center";
+  const mAuto = hs.fitContent && center ? "auto" : "0";
+  const parts = [
+    `font-family:${options.fontStack}`,
+    `font-size:${fontSize}px`,
+    `font-weight:${weight}`,
+    `margin:${mt}px ${mAuto} ${mb}px ${mAuto}`,
+    `line-height:${hs.lineHeight}`,
+    `color:${color}`
+  ];
+  if (hs.fitContent) parts.push("width:fit-content");
+  if (center && !hs.fitContent) parts.push("text-align:center");
+  if (hs.decoration === "underline") parts.push(`border-bottom:2px solid ${accent}`, "padding-bottom:6px");
+  else if (hs.decoration === "sidebar") parts.push(`border-left:3px solid ${accent}`, "padding-left:10px");
+  return `<${tag} style="${parts.join(";")};">${inlinesToHtml(block.children, options, indexMap)}</${tag}>`;
+};
+
+// 金句卡：引用的卡片式变体（居中、大引号、卡片底色），由 StyleTokens.quoteVariant === "card" 触发
+const quoteCardHtml = (
+  block: Extract<Block, { type: "quote" }>,
+  options: RenderOptions,
+  indexMap?: Map<string, number>
+): string => {
+  const inner = inlinesToHtml(block.children, options, indexMap) || "<br/>";
+  const baseSize = Number.parseFloat(options.typography.bodySize) || 16;
+  const bg = options.style.calloutBg ?? options.colors.codeBg;
+  return `<section style="margin:24px 0;padding:22px 20px;background:${bg};border-radius:${options.style.radiusMd};text-align:center;font-family:${options.fontStack};"><span style="display:block;font-size:${Math.round(
+    baseSize * 2.4
+  )}px;line-height:1;color:${options.colors.link};margin:0 0 6px;">&ldquo;</span><p style="margin:0;font-size:${Math.round(
+    baseSize * 1.1
+  )}px;line-height:1.7;font-weight:600;color:${options.colors.text};">${inner}</p></section>`;
+};
 
 const listItemToHtml = (
   item: ListItem,
@@ -341,86 +411,7 @@ const blockToHtml = (
           indexMap
         )}</${tag}>`;
       }
-      if (isSspai) {
-        if (block.level === 1) {
-          return `<${tag} style="line-height:1.5;font-size:${h1Size}px;font-family:${options.fontStack};font-weight:700;margin:0 auto ${Math.round(baseSize * 2.6)}px 0;width:fit-content;border-left:6px solid ${options.colors.link};padding-left:6px;color:${options.colors.text};">${inlinesToHtml(
-            block.children,
-            options,
-            indexMap
-          )}</${tag}>`;
-        }
-        if (block.level === 2) {
-          return `<${tag} style="line-height:1.5;font-family:${options.fontStack};font-size:${h2Size}px;font-weight:700;margin:${Math.round(baseSize * 2.6)}px auto;width:fit-content;color:${options.colors.text};">${inlinesToHtml(
-            block.children,
-            options,
-            indexMap
-          )}</${tag}>`;
-        }
-        return `<${tag} style="line-height:1.5;font-family:${options.fontStack};font-size:${h3Size}px;font-weight:700;margin:${Math.round(baseSize * 2.6)}px 0;width:fit-content;color:${options.colors.text};">${inlinesToHtml(
-          block.children,
-          options,
-          indexMap
-        )}</${tag}>`;
-      }
-      if (isBlack) {
-        if (block.level === 1) {
-          return `<${tag} style="line-height:1.5;font-size:${h1Size}px;font-family:${options.fontStack};font-weight:700;margin:0 auto ${Math.round(baseSize * 2.6)}px;width:fit-content;color:${options.colors.link};text-align:center;padding:0 1em;border-bottom:8px solid ${options.colors.link};">${inlinesToHtml(
-            block.children,
-            options,
-            indexMap
-          )}</${tag}>`;
-        }
-        if (block.level === 2) {
-          return `<${tag} style="line-height:1.5;font-family:${options.fontStack};font-size:${h2Size}px;font-weight:700;margin:${Math.round(baseSize * 2.6)}px auto;width:fit-content;color:${options.colors.link};text-align:center;padding:0 0.2em;">${inlinesToHtml(
-            block.children,
-            options,
-            indexMap
-          )}</${tag}>`;
-        }
-        return `<${tag} style="line-height:1.5;font-family:${options.fontStack};font-size:${h3Size}px;font-weight:700;margin:${Math.round(baseSize * 2.6)}px 0;width:fit-content;color:${options.colors.link};text-align:left;">${inlinesToHtml(
-          block.children,
-          options,
-          indexMap
-        )}</${tag}>`;
-      }
-      if (isAccentTheme) {
-        const accentBorder = isBlue ? "#7bb7e0" : options.colors.link;
-        const headingMargin = Math.round(baseSize * 2.6);
-        const h3MarginTop = isBlue ? Math.round(baseSize * 3.33) : headingMargin;
-        const h3MarginBottom = isBlue ? Math.round(baseSize * 2.67) : headingMargin;
-        if (block.level === 1) {
-          return `<${tag} style="line-height:1.5;font-size:${h1Size}px;font-family:${options.fontStack};font-weight:700;margin:0 auto ${headingMargin}px;width:fit-content;color:${options.colors.link};text-align:center;padding:0 1em;border-bottom:2px solid ${accentBorder};">${inlinesToHtml(
-            block.children,
-            options,
-            indexMap
-          )}</${tag}>`;
-        }
-        if (block.level === 2) {
-          const headingOptions: RenderOptions = {
-            ...options,
-            colors: { ...options.colors, link: "#ffffff" }
-          };
-          return `<${tag} style="line-height:1.5;font-family:${options.fontStack};font-size:${h2Size}px;font-weight:700;margin:${headingMargin}px auto;width:fit-content;background:${options.colors.link};color:#fff;text-align:center;padding:0 0.2em;">${inlinesToHtml(
-            block.children,
-            headingOptions,
-            indexMap
-          )}</${tag}>`;
-        }
-        return `<${tag} style="line-height:1.5;font-family:${options.fontStack};font-size:${h3Size}px;font-weight:700;margin:${h3MarginTop}px 0 ${h3MarginBottom}px;width:fit-content;color:#000;padding-left:8px;border-left:3px solid ${accentBorder};">${inlinesToHtml(
-          block.children,
-          options,
-          indexMap
-        )}</${tag}>`;
-      }
-      const fontSize =
-        block.level === 1 ? `${h1Size}px` : block.level === 2 ? `${h2Size}px` : `${h3Size}px`;
-      const marginTop = block.level === 1 ? `${Math.round(baseSize * 1.6)}px` : `${Math.round(baseSize * 1.4)}px`;
-      const marginBottom = block.level === 1 ? `${Math.round(baseSize * 0.9)}px` : `${Math.round(baseSize * 0.8)}px`;
-      return `<${tag} style="font-family:${options.fontStack};font-size:${fontSize};font-weight:${options.typography.headingWeight};margin:${marginTop} 0 ${marginBottom} 0;line-height:1.5;color:${options.colors.text};">${inlinesToHtml(
-        block.children,
-        options,
-        indexMap
-      )}</${tag}>`;
+      return headingToHtml(block, options, indexMap);
     }
     case "paragraph":
       return `<p style="${buildBodyParagraphStyle(options)}">${inlinesToHtml(
@@ -429,6 +420,7 @@ const blockToHtml = (
         indexMap
       )}</p>`;
     case "quote":
+      if (options.style.quoteVariant === "card") return quoteCardHtml(block, options, indexMap);
       if (isNotion) {
         return `<blockquote style="font-family:${options.fontStack};border-left:3px solid ${options.colors.border};padding:2px 0 2px 14px;margin:18px 0;color:${options.colors.subText};line-height:${options.typography.bodyLineHeight};font-size:${options.typography.bodySize};">${inlinesToHtml(
           block.children,
@@ -480,7 +472,7 @@ const blockToHtml = (
       const icon = escapeHtml((block.icon || "💡").trim() || "💡");
       const inner = inlinesToHtml(block.children, options, indexMap) || "<br/>";
       if (isNotion) {
-        return `<section style="margin:16px 0;padding:12px 14px;background:${options.colors.codeBg};border-radius:6px;color:${options.colors.text};font-family:${options.fontStack};line-height:${options.typography.bodyLineHeight};font-size:${options.typography.bodySize};${options.typography.letterSpacing ? `letter-spacing:${options.typography.letterSpacing};` : ""}"><p style="margin:0;"><strong style="margin-right:8px;">${icon}</strong>${inner}</p></section>`;
+        return `<section style="margin:16px 0;padding:12px 14px;background:${options.style.calloutBg ?? options.colors.codeBg};border-radius:6px;color:${options.colors.text};font-family:${options.fontStack};line-height:${options.typography.bodyLineHeight};font-size:${options.typography.bodySize};${options.typography.letterSpacing ? `letter-spacing:${options.typography.letterSpacing};` : ""}"><p style="margin:0;"><strong style="margin-right:8px;">${icon}</strong>${inner}</p></section>`;
       }
       if (isMatcha) {
         return `<section style="margin:16px 0;padding:12px 14px;background:#f2f8ef;border:1px solid ${options.colors.border};border-left:4px solid ${options.colors.link};border-radius:6px;color:${options.colors.text};font-family:${options.fontStack};line-height:${options.typography.bodyLineHeight};font-size:${options.typography.bodySize};${options.typography.letterSpacing ? `letter-spacing:${options.typography.letterSpacing};` : ""}"><p style="margin:0;"><strong style="margin-right:8px;color:${options.colors.link};">${icon}</strong>${inner}</p></section>`;
@@ -497,7 +489,7 @@ const blockToHtml = (
       if (isSspai) {
         return `<section style="margin:16px 0;padding:10px 12px;background:#fff7f7;border-left:2px solid ${options.colors.link};color:${options.colors.text};font-family:${options.fontStack};line-height:${options.typography.bodyLineHeight};font-size:${options.typography.bodySize};${options.typography.letterSpacing ? `letter-spacing:${options.typography.letterSpacing};` : ""}"><p style="margin:0;"><strong style="margin-right:6px;color:${options.colors.link};">${icon}</strong>${inner}</p></section>`;
       }
-      return `<section style="margin:16px 0;padding:10px 12px;background:${options.colors.codeBg};border-left:3px solid ${options.colors.border};border-radius:4px;color:${options.colors.text};font-family:${options.fontStack};line-height:${options.typography.bodyLineHeight};font-size:${options.typography.bodySize};${options.typography.letterSpacing ? `letter-spacing:${options.typography.letterSpacing};` : ""}"><p style="margin:0;"><strong style="margin-right:6px;color:${isAccentTheme ? options.colors.link : options.colors.text};">${icon}</strong>${inner}</p></section>`;
+      return `<section style="margin:16px 0;padding:10px 12px;background:${options.style.calloutBg ?? options.colors.codeBg};border-left:3px solid ${options.colors.border};border-radius:4px;color:${options.colors.text};font-family:${options.fontStack};line-height:${options.typography.bodyLineHeight};font-size:${options.typography.bodySize};${options.typography.letterSpacing ? `letter-spacing:${options.typography.letterSpacing};` : ""}"><p style="margin:0;"><strong style="margin-right:6px;color:${isAccentTheme ? options.colors.link : options.colors.text};">${icon}</strong>${inner}</p></section>`;
     }
     case "divider":
       if (isNotion || isMatcha || isAcademia || isBento) {
@@ -523,7 +515,7 @@ const blockToHtml = (
       const macDots = `<span style="display:flex;padding:10px 14px 0px;"><svg xmlns="http://www.w3.org/2000/svg" version="1.1" x="0px" y="0px" width="45px" height="13px" viewBox="0 0 450 130" role="img" aria-label="code-window"><ellipse cx="50" cy="65" rx="50" ry="52" stroke="rgb(220,60,54)" stroke-width="2" fill="rgb(237,108,96)"></ellipse><ellipse cx="225" cy="65" rx="50" ry="52" stroke="rgb(218,151,33)" stroke-width="2" fill="rgb(247,193,81)"></ellipse><ellipse cx="400" cy="65" rx="50" ry="52" stroke="rgb(27,161,37)" stroke-width="2" fill="rgb(100,200,86)"></ellipse></svg></span>`;
       const langAttr = langLabel ? ` data-language-pending="${escapeHtml(langLabel)}"` : "";
       if (isPineapple) {
-        return `<pre style="color:#333;background:#fafafa;font-size:90%;overflow-x:auto;border-radius:8px;line-height:1.5;margin:10px 8px;padding:0px !important;border:1px solid #f0f0f0;box-shadow:0 2px 10px rgba(0,0,0,0.3);">${macDots}<code${langAttr} style="font-size:90%;border-radius:4px;display:block;padding:0.5em 1em 1em;overflow-x:auto;text-indent:0px;color:inherit;background:none;white-space:pre;margin:0px;font-family:Menlo, Monaco, Consolas, monospace;">${highlighted}</code></pre>`;
+        return `<pre style="color:#333;background:#fafafa;font-size:90%;overflow-x:auto;border-radius:8px;line-height:1.5;margin:${options.style.codeMargin};padding:0px !important;border:1px solid #f0f0f0;box-shadow:0 2px 10px rgba(0,0,0,0.3);">${macDots}<code${langAttr} style="font-size:90%;border-radius:4px;display:block;padding:0.5em 1em 1em;overflow-x:auto;text-indent:0px;color:inherit;background:none;white-space:pre;margin:0px;font-family:Menlo, Monaco, Consolas, monospace;">${highlighted}</code></pre>`;
       }
       if (isNotion || isMatcha || isAcademia || isBento) {
         const codeTextColor = isAcademia ? "#4f3f30" : "#24292f";
@@ -532,9 +524,9 @@ const blockToHtml = (
           : isAcademia || isMatcha || isNotion
             ? `border:1px solid ${options.colors.divider};`
             : "";
-        return `<pre style="color:${codeTextColor};background:${options.colors.codeBg};font-size:90%;overflow-x:auto;border-radius:${isAcademia ? "0" : "8px"};line-height:1.5;margin:14px 0;padding:0px !important;${codeBorder}">${macDots}<code${langAttr} style="font-size:90%;border-radius:4px;display:block;padding:0.5em 1em 1em;overflow-x:auto;text-indent:0px;color:inherit;background:none;white-space:pre;margin:0px;font-family:Menlo, Monaco, Consolas, monospace;">${highlighted}</code></pre>`;
+        return `<pre style="color:${codeTextColor};background:${options.colors.codeBg};font-size:90%;overflow-x:auto;border-radius:${isAcademia ? "0" : "8px"};line-height:1.5;margin:${options.style.codeMargin};padding:0px !important;${codeBorder}">${macDots}<code${langAttr} style="font-size:90%;border-radius:4px;display:block;padding:0.5em 1em 1em;overflow-x:auto;text-indent:0px;color:inherit;background:none;white-space:pre;margin:0px;font-family:Menlo, Monaco, Consolas, monospace;">${highlighted}</code></pre>`;
       }
-      return `<pre style="color:rgb(201,209,217);background:rgb(13,17,23);font-size:90%;overflow-x:auto;border-radius:8px;line-height:1.5;margin:10px 8px;padding:0px !important;">${macDots}<code${langAttr} style="font-size:90%;border-radius:4px;display:block;padding:0.5em 1em 1em;overflow-x:auto;text-indent:0px;color:inherit;background:none;white-space:pre;margin:0px;font-family:Menlo, Monaco, Consolas, monospace;">${highlighted}</code></pre>`;
+      return `<pre style="color:rgb(201,209,217);background:rgb(13,17,23);font-size:90%;overflow-x:auto;border-radius:8px;line-height:1.5;margin:${options.style.codeMargin};padding:0px !important;">${macDots}<code${langAttr} style="font-size:90%;border-radius:4px;display:block;padding:0.5em 1em 1em;overflow-x:auto;text-indent:0px;color:inherit;background:none;white-space:pre;margin:0px;font-family:Menlo, Monaco, Consolas, monospace;">${highlighted}</code></pre>`;
     }
     case "list":
       return listToHtml(block, options, 0, indexMap, imageMap);
@@ -558,12 +550,40 @@ const renderReferencesSection = (
   );
   const itemHtml = items
     .map((item, idx) => {
-      return `<p style="font-family:${options.fontStack};font-size:${options.typography.bodySize};line-height:${options.typography.bodyLineHeight};margin:6px 0;color:${options.colors.text};${options.typography.letterSpacing ? `letter-spacing:${options.typography.letterSpacing};` : ""}"><span style="opacity:0.6;">[${idx + 1}]</span> 链接: <em>${escapeHtml(
+      const host = hostnameOf(item.href);
+      const label = item.text.trim() || host;
+      const hostSuffix =
+        label === host ? "" : ` <span style="opacity:0.5;">（${escapeHtml(host)}）</span>`;
+      return `<p style="font-family:${options.fontStack};font-size:${options.typography.bodySize};line-height:${options.typography.bodyLineHeight};margin:6px 0;color:${options.colors.text};${options.typography.letterSpacing ? `letter-spacing:${options.typography.letterSpacing};` : ""}"><span style="opacity:0.6;">[${idx + 1}]</span> <a href="${escapeHtml(
         item.href
-      )}</em></p>`;
+      )}" style="color:${options.colors.link};text-decoration:none;border-bottom:1px solid ${options.colors.divider};">${escapeHtml(label)}</a>${hostSuffix}</p>`;
     })
     .join("");
   return `${headingHtml}${itemHtml}`;
+};
+
+// 基于 Doc.title 的标题区（强调色短条 + 大标题 + 细分割线）。
+// 仅当 StyleTokens.showTitleHeader 开启且存在标题时输出；若首个块已是同文本的一级标题则去重避免双标题。
+const renderTitleBlock = (doc: Doc, options: RenderOptions): string => {
+  if (!options.style.showTitleHeader) return "";
+  const title = doc.title?.trim();
+  if (!title) return "";
+  const first = doc.blocks[0];
+  if (first && first.type === "heading" && first.level === 1) {
+    const firstText = first.children.map((child) => child.content).join("").trim();
+    if (firstText === title) return "";
+  }
+  const baseSize = Number.parseFloat(options.typography.bodySize) || 16;
+  const bar = `<p style="margin:0 0 12px;"><span style="display:inline-block;width:36px;height:3px;background:${options.colors.link};"></span></p>`;
+  const heading = `<h1 style="font-family:${options.fontStack};font-size:${Math.round(
+    baseSize * 1.9
+  )}px;font-weight:800;line-height:1.3;margin:0 0 ${Math.round(baseSize * 1.2)}px;color:${options.colors.text};">${escapeHtml(
+    title
+  )}</h1>`;
+  const divider = `<hr style="border:none;border-top:1px solid ${options.colors.divider};margin:0 0 ${Math.round(
+    baseSize * 1.6
+  )}px;" />`;
+  return `<section style="margin:0 0 ${Math.round(baseSize * 0.4)}px;">${bar}${heading}${divider}</section>`;
 };
 
 export const renderDocToHtml = (
@@ -573,9 +593,10 @@ export const renderDocToHtml = (
 ): string => {
   const options = mergeRenderOptions(overrides);
   const { items, indexMap } = collectReferences(doc);
+  const titleHtml = renderTitleBlock(doc, options);
   const bodyHtml = doc.blocks.map((block) => blockToHtml(block, options, indexMap, imageMap)).join("");
   const referencesHtml = renderReferencesSection(items, options, indexMap);
-  return `${bodyHtml}${referencesHtml}`;
+  return `${titleHtml}${bodyHtml}${referencesHtml}`;
 };
 
 const inlineToText = (inline: Inline, indexMap: Map<string, number>): string => {
