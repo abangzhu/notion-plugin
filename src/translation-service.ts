@@ -35,7 +35,10 @@ const parseJsonPayload = <T>(raw: string): T => {
   return JSON.parse(candidate) as T;
 };
 
-const createOpenAIClient = (settings: TranslationSettings) =>
+// 通用 LLM 调用所需的最小设置：任何携带 apiKey + model 的设置对象都可复用 callResponsesApi
+export type LlmCallSettings = Pick<TranslationSettings, "apiKey" | "model">;
+
+const createOpenAIClient = (settings: LlmCallSettings) =>
   new OpenAI({
     apiKey: settings.apiKey,
     maxRetries: 0,
@@ -47,7 +50,7 @@ const wait = (ms: number): Promise<void> =>
     globalThis.setTimeout(resolve, ms);
   });
 
-const getErrorMessage = (error: unknown): string => {
+export const getErrorMessage = (error: unknown): string => {
   if (error instanceof Error && error.message.trim()) {
     return error.message.trim();
   }
@@ -102,7 +105,7 @@ const formatUserFriendlyError = (error: unknown, modelName?: string): string => 
   }
 };
 
-const renderPromptTemplate = (
+export const renderPromptTemplate = (
   template: string,
   variables: Record<string, string>
 ): string =>
@@ -160,8 +163,8 @@ const chunkInputs = (
   return chunks.length > 0 ? chunks : [inputs];
 };
 
-const callResponsesApi = async <T>(params: {
-  settings: TranslationSettings;
+export const callResponsesApi = async <T>(params: {
+  settings: LlmCallSettings;
   input: string;
   signal: AbortSignal;
 }): Promise<T> => {

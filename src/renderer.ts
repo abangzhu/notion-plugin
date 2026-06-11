@@ -81,7 +81,13 @@ const collectReferences = (doc: Doc): { items: ReferenceItem[]; indexMap: Map<st
       case "paragraph":
       case "quote":
       case "callout":
+      case "emphasis":
         collectReferencesFromInlines(block.children, items, indexMap);
+        break;
+      case "steps":
+        block.items.forEach((item) =>
+          collectReferencesFromInlines(item.children, items, indexMap)
+        );
         break;
       case "list":
         collectReferencesFromList(block, items, indexMap);
@@ -420,7 +426,8 @@ const blockToHtml = (
         indexMap
       )}</p>`;
     case "quote":
-      if (options.style.quoteVariant === "card") return quoteCardHtml(block, options, indexMap);
+      if (block.variant === "card" || options.style.quoteVariant === "card")
+        return quoteCardHtml(block, options, indexMap);
       if (isNotion) {
         return `<blockquote style="font-family:${options.fontStack};border-left:3px solid ${options.colors.border};padding:2px 0 2px 14px;margin:18px 0;color:${options.colors.subText};line-height:${options.typography.bodyLineHeight};font-size:${options.typography.bodySize};">${inlinesToHtml(
           block.children,
@@ -527,6 +534,32 @@ const blockToHtml = (
         return `<pre style="color:${codeTextColor};background:${options.colors.codeBg};font-size:90%;overflow-x:auto;border-radius:${isAcademia ? "0" : "8px"};line-height:1.5;margin:${options.style.codeMargin};padding:0px !important;${codeBorder}">${macDots}<code${langAttr} style="font-size:90%;border-radius:4px;display:block;padding:0.5em 1em 1em;overflow-x:auto;text-indent:0px;color:inherit;background:none;white-space:pre;margin:0px;font-family:Menlo, Monaco, Consolas, monospace;">${highlighted}</code></pre>`;
       }
       return `<pre style="color:rgb(201,209,217);background:rgb(13,17,23);font-size:90%;overflow-x:auto;border-radius:8px;line-height:1.5;margin:${options.style.codeMargin};padding:0px !important;">${macDots}<code${langAttr} style="font-size:90%;border-radius:4px;display:block;padding:0.5em 1em 1em;overflow-x:auto;text-indent:0px;color:inherit;background:none;white-space:pre;margin:0px;font-family:Menlo, Monaco, Consolas, monospace;">${highlighted}</code></pre>`;
+    }
+    case "emphasis": {
+      const inner = inlinesToHtml(block.children, options, indexMap) || "<br/>";
+      const accent = options.colors.link;
+      const bg = options.style.calloutBg ?? options.colors.codeBg;
+      const ls = options.typography.letterSpacing
+        ? `letter-spacing:${options.typography.letterSpacing};`
+        : "";
+      if (isMatcha) {
+        return `<section style="margin:18px 0;padding:14px 16px;background:#eef7ec;border:1px solid ${options.colors.border};border-left:4px solid ${accent};border-radius:6px;font-family:${options.fontStack};font-size:${options.typography.bodySize};line-height:${options.typography.bodyLineHeight};color:${options.colors.text};${ls}"><p style="margin:0;font-weight:600;">${inner}</p></section>`;
+      }
+      return `<section style="margin:18px 0;padding:14px 16px;background:${bg};border-left:4px solid ${accent};border-radius:${options.style.radiusMd};font-family:${options.fontStack};font-size:${options.typography.bodySize};line-height:${options.typography.bodyLineHeight};color:${options.colors.text};${ls}"><p style="margin:0;font-weight:600;">${inner}</p></section>`;
+    }
+    case "steps": {
+      const accent = options.colors.link;
+      const bg = options.style.calloutBg ?? options.colors.codeBg;
+      const rows = block.items
+        .map((item, i) => {
+          const inner = inlinesToHtml(item.children, options, indexMap) || "<br/>";
+          const badge = block.ordered
+            ? `<span style="flex:0 0 auto;display:inline-block;width:24px;height:24px;border-radius:50%;background:${accent};color:#fff;font-size:13px;line-height:24px;text-align:center;font-weight:700;margin-right:10px;">${i + 1}</span>`
+            : `<span style="flex:0 0 auto;display:inline-block;width:8px;height:8px;border-radius:50%;background:${accent};margin:9px 14px 0 6px;"></span>`;
+          return `<section style="display:flex;align-items:flex-start;margin:0 0 12px;">${badge}<p style="margin:0;flex:1;font-family:${options.fontStack};font-size:${options.typography.bodySize};line-height:${options.typography.bodyLineHeight};color:${options.colors.text};">${inner}</p></section>`;
+        })
+        .join("");
+      return `<section style="margin:18px 0;padding:16px 16px 4px;background:${bg};border-radius:${options.style.radiusMd};font-family:${options.fontStack};">${rows}</section>`;
     }
     case "list":
       return listToHtml(block, options, 0, indexMap, imageMap);
@@ -708,12 +741,20 @@ export const renderDocToText = (doc: Doc): string => {
         case "heading":
         case "paragraph":
         case "quote":
+        case "emphasis":
           return inlinesToText(block.children, indexMap);
         case "callout": {
           const icon = block.icon?.trim() || "💡";
           const content = inlinesToText(block.children, indexMap);
           return `${icon} ${content}`.trim();
         }
+        case "steps":
+          return block.items
+            .map(
+              (item, idx) =>
+                `${block.ordered ? `${idx + 1}. ` : "- "}${inlinesToText(item.children, indexMap)}`
+            )
+            .join("\n");
         case "divider":
           return "---";
         case "image":
@@ -759,6 +800,15 @@ export const renderDocToMarkdown = (doc: Doc): string => {
           const content = inlinesToMarkdown(block.children).trim();
           return `> ${icon} ${content}`.trim();
         }
+        case "emphasis":
+          return `> **${inlinesToMarkdown(block.children).trim()}**`;
+        case "steps":
+          return block.items
+            .map(
+              (item, idx) =>
+                `${block.ordered ? `${idx + 1}.` : "-"} ${inlinesToMarkdown(item.children).trim()}`
+            )
+            .join("\n");
         case "divider":
           return "---";
         case "image":

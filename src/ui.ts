@@ -17,6 +17,14 @@ import {
   TRANSLATION_SETTINGS_KEY
 } from "./translation";
 import {
+  applyFormattingOperationsToDoc,
+  DEFAULT_FORMATTING_SETTINGS,
+  FORMATTING_PORT_NAME,
+  FORMATTING_SETTINGS_KEY,
+  hashFormatting,
+  normalizeFormattingSettings
+} from "./formatting";
+import {
   DEFAULT_COLORS,
   DEFAULT_TYPO,
   FONT_STACK_DEFAULT,
@@ -32,6 +40,14 @@ import type {
   TranslationSettings,
   TranslationState
 } from "./translation";
+import type {
+  FormattingAggressiveness,
+  FormattingBackgroundState,
+  FormattingOperation,
+  FormattingPortServerMessage,
+  FormattingSettings,
+  FormattingState
+} from "./formatting";
 import type { RenderOptions, ThemeColors, Typography } from "./theme";
 import type { Doc } from "./types";
 import {
@@ -47,6 +63,7 @@ const DRAWER_ID = "__notion_wechat_drawer";
 const DRAWER_STYLE_ID = "__notion_wechat_drawer_style";
 const ACCENT = "#10b981";
 const TRANSLATION_CACHE_PREFIX = "translationCache";
+const FORMATTING_CACHE_PREFIX = "formattingCache";
 
 
 type ThemePreset = {
@@ -66,6 +83,11 @@ type StatusTone = "info" | "success" | "error";
 
 type TranslationCacheEntry = {
   translatedDoc: Doc;
+  createdAt: number;
+};
+
+type FormattingCacheEntry = {
+  operations: FormattingOperation[];
   createdAt: number;
 };
 
@@ -665,6 +687,11 @@ const createDrawer = () => {
   const translateSpinner = translateControls.spinner;
   const translateLabel = translateControls.labelElement;
 
+  const formatControls = createLoadingButton("智能排版");
+  const formatButton = formatControls.button;
+  const formatSpinner = formatControls.spinner;
+  const formatLabel = formatControls.labelElement;
+
   const contentSegment = document.createElement("div");
   contentSegment.style.display = "none";
   contentSegment.style.gap = "6px";
@@ -677,6 +704,19 @@ const createDrawer = () => {
   const translatedContentButton = createSegment("译文");
   contentSegment.appendChild(originalContentButton);
   contentSegment.appendChild(translatedContentButton);
+
+  const formatSegment = document.createElement("div");
+  formatSegment.style.display = "none";
+  formatSegment.style.gap = "6px";
+  formatSegment.style.padding = "4px";
+  formatSegment.style.border = "1px solid #e5e7eb";
+  formatSegment.style.borderRadius = "14px";
+  formatSegment.style.background = "#fff";
+
+  const originalFormatButton = createSegment("原排版", true);
+  const formattedFormatButton = createSegment("AI排版");
+  formatSegment.appendChild(originalFormatButton);
+  formatSegment.appendChild(formattedFormatButton);
 
   const previewSegment = document.createElement("div");
   previewSegment.style.display = "flex";
@@ -694,7 +734,9 @@ const createDrawer = () => {
   const settingsButton = createButton("设置", "ghost");
 
   rowTopLeft.appendChild(translateButton);
+  rowTopLeft.appendChild(formatButton);
   rowTopLeft.appendChild(contentSegment);
+  rowTopLeft.appendChild(formatSegment);
   rowTopLeft.appendChild(previewSegment);
   rowTop.appendChild(rowTopLeft);
   rowTop.appendChild(settingsButton);
@@ -868,7 +910,7 @@ const createDrawer = () => {
   settingsHeader.style.borderBottom = "1px solid #f1f5f9";
 
   const settingsTitle = document.createElement("div");
-  settingsTitle.textContent = "翻译设置";
+  settingsTitle.textContent = "翻译与排版设置";
   settingsTitle.style.fontSize = "16px";
   settingsTitle.style.fontWeight = "700";
   settingsTitle.style.color = "#111827";
@@ -919,6 +961,13 @@ const createDrawer = () => {
   const chunkThresholdInput = createTextInput("number");
   const chunkMaxUnitsInput = createTextInput("number");
 
+  const aggressivenessSelect = createSelect([
+    { value: "conservative", label: "保守" },
+    { value: "balanced", label: "均衡" },
+    { value: "bold", label: "大胆" }
+  ]);
+  const formattingExtraInstructionsInput = createTextArea(4);
+
   const targetLanguageSegment = document.createElement("div");
   targetLanguageSegment.style.display = "flex";
   targetLanguageSegment.style.gap = "6px";
@@ -958,9 +1007,14 @@ const createDrawer = () => {
     createField("分块阈值", chunkThresholdInput, "超过该字数后启用分块翻译"),
     createField("每块最大单元数", chunkMaxUnitsInput)
   ];
+  const formattingFields = [
+    createField("排版力度", aggressivenessSelect, "保守=高置信才改；大胆=积极重构版式"),
+    createField("额外说明", formattingExtraInstructionsInput, "对智能排版的额外要求（不会改动正文文字）")
+  ];
 
   settingsBody.appendChild(createCollapsibleSection("基础配置", true, basicFields));
   settingsBody.appendChild(createCollapsibleSection("翻译风格", false, styleFields));
+  settingsBody.appendChild(createCollapsibleSection("智能排版", false, formattingFields));
   settingsBody.appendChild(createCollapsibleSection("高级选项", false, advancedFields));
 
   [
@@ -973,7 +1027,9 @@ const createDrawer = () => {
     preserveTermsInput,
     extraInstructionsInput,
     chunkThresholdInput,
-    chunkMaxUnitsInput
+    chunkMaxUnitsInput,
+    aggressivenessSelect,
+    formattingExtraInstructionsInput
   ].forEach((control) => bindEditableControl(control));
   bindClickableControl(apiKeyToggleButton);
 
@@ -1043,6 +1099,12 @@ const createDrawer = () => {
     translateButton,
     translateSpinner,
     translateLabel,
+    formatButton,
+    formatSpinner,
+    formatLabel,
+    formatSegment,
+    originalFormatButton,
+    formattedFormatButton,
     contentSegment,
     originalContentButton,
     translatedContentButton,
@@ -1069,7 +1131,9 @@ const createDrawer = () => {
       preserveTermsInput,
       extraInstructionsInput,
       chunkThresholdInput,
-      chunkMaxUnitsInput
+      chunkMaxUnitsInput,
+      aggressivenessSelect,
+      formattingExtraInstructionsInput
     }
   };
 };
@@ -1099,6 +1163,15 @@ export const initDrawer = () => {
   let translatedMarkdown = "";
   let sourceLanguage: DetectedLanguage = "unknown";
 
+  // 智能排版：formattedDoc 基于某个 base（原文或译文），showFormatted 控制是否显示
+  let formattedDoc: Doc | null = null;
+  let formattedHtml = "";
+  let formattedText = "";
+  let formattedMarkdown = "";
+  let showFormatted = false;
+  let formattingBaseMode: PreviewContentMode = "original";
+  let formattingBaseDoc: Doc | null = null;
+
   let previewMode: PreviewFormatMode = "wechat";
   let contentMode: PreviewContentMode = "original";
   let translationState: TranslationState = "idle";
@@ -1107,6 +1180,11 @@ export const initDrawer = () => {
   let suppressNextTranslationDisconnect = false;
   let translationDisconnectRecoveryId = 0;
 
+  let formattingState: FormattingState = "idle";
+  let formattingJobId = "";
+  let formattingPort: chrome.runtime.Port | null = null;
+  let suppressNextFormattingDisconnect = false;
+
   let currentTheme = THEME_PRESETS[0];
   let currentFont = FONT_PRESETS[0];
   let fontScale = 1;
@@ -1114,9 +1192,13 @@ export const initDrawer = () => {
   let translationSettings = DEFAULT_TRANSLATION_SETTINGS;
   let settingsLoadPromise: Promise<void> | null = null;
 
+  let formattingSettings = DEFAULT_FORMATTING_SETTINGS;
+  let formattingSettingsLoadPromise: Promise<void> | null = null;
+
   let statusMessage = "";
   let statusTone: StatusTone = "info";
   let translationStatusMessage = "";
+  let formattingStatusMessage = "";
 
   let imageMap: ImageMap = new Map();
   let imagePreloadAborted = false;
@@ -1138,10 +1220,18 @@ export const initDrawer = () => {
     return "";
   };
 
+  const isJobStatusActive = (): boolean =>
+    (translationState === "translating" && translationStatusMessage.trim().length > 0) ||
+    (formattingState === "formatting" && formattingStatusMessage.trim().length > 0);
+
   const getVisibleStatusMessage = (): string => {
-    const usingTranslationStatus =
-      translationState === "translating" && translationStatusMessage.trim().length > 0;
-    return usingTranslationStatus ? translationStatusMessage : statusMessage;
+    if (translationState === "translating" && translationStatusMessage.trim().length > 0) {
+      return translationStatusMessage;
+    }
+    if (formattingState === "formatting" && formattingStatusMessage.trim().length > 0) {
+      return formattingStatusMessage;
+    }
+    return statusMessage;
   };
 
   const setStatusTone = (element: HTMLElement, tone: StatusTone) => {
@@ -1151,12 +1241,11 @@ export const initDrawer = () => {
 
   const updateStatus = () => {
     if (!drawerRefs) return;
-    const usingTranslationStatus =
-      translationState === "translating" && translationStatusMessage.trim().length > 0;
+    const usingJobStatus = isJobStatusActive();
     const visibleStatusMessage = getVisibleStatusMessage();
     drawerRefs.status.textContent = visibleStatusMessage;
     drawerRefs.status.title = visibleStatusMessage;
-    setStatusTone(drawerRefs.status, usingTranslationStatus ? "info" : statusTone);
+    setStatusTone(drawerRefs.status, usingJobStatus ? "info" : statusTone);
     setButtonDisabled(drawerRefs.copyStatusButton, visibleStatusMessage.trim().length === 0);
     drawerRefs.copyStatusButton.style.display = visibleStatusMessage.trim().length > 0 ? "inline-flex" : "none";
     drawerRefs.copyStatusButton.title = visibleStatusMessage ? "复制当前消息" : "";
@@ -1171,6 +1260,11 @@ export const initDrawer = () => {
 
   const setTranslationStatus = (message: string) => {
     translationStatusMessage = message;
+    updateStatus();
+  };
+
+  const setFormattingStatus = (message: string) => {
+    formattingStatusMessage = message;
     updateStatus();
   };
 
@@ -1297,20 +1391,30 @@ export const initDrawer = () => {
     return `${TRANSLATION_CACHE_PREFIX}:${sourceHash}:${getSettingsHash(translationSettings)}`;
   };
 
+  // 智能排版仅在它所基于的 base 视图（原文/译文）下可切换显示
+  const isFormattedActive = (): boolean =>
+    showFormatted && !!formattedDoc && formattingBaseMode === contentMode;
+
   const getCurrentHtml = (): string => {
+    if (isFormattedActive()) return formattedHtml;
     if (contentMode === "translated" && translatedDoc) return translatedHtml;
     return originalHtml;
   };
 
   const getCurrentMarkdown = (): string => {
+    if (isFormattedActive()) return formattedMarkdown;
     if (contentMode === "translated" && translatedDoc) return translatedMarkdown;
     return originalMarkdown;
   };
 
   const getCurrentText = (): string => {
+    if (isFormattedActive()) return formattedText;
     if (contentMode === "translated" && translatedDoc) return translatedText;
     return originalText;
   };
+
+  const currentBaseDoc = (): Doc | null =>
+    contentMode === "translated" && translatedDoc ? translatedDoc : sourceDoc;
 
   const renderPreview = () => {
     if (!drawerRefs) return;
@@ -1416,7 +1520,26 @@ export const initDrawer = () => {
       translatedMarkdown = "";
     }
 
+    if (formattedDoc) {
+      formattedHtml = renderDocToHtml(formattedDoc, renderOptions, imageMap);
+      formattedText = renderDocToText(formattedDoc);
+      formattedMarkdown = renderDocToMarkdown(formattedDoc);
+    } else {
+      formattedHtml = "";
+      formattedText = "";
+      formattedMarkdown = "";
+    }
+
     renderPreview();
+  };
+
+  const clearFormattedContent = () => {
+    formattedDoc = null;
+    formattedHtml = "";
+    formattedText = "";
+    formattedMarkdown = "";
+    formattingBaseDoc = null;
+    showFormatted = false;
   };
 
   const clearTranslatedContent = () => {
@@ -1426,6 +1549,10 @@ export const initDrawer = () => {
     translatedMarkdown = "";
     if (contentMode === "translated") {
       contentMode = "original";
+    }
+    // 译文消失后，基于译文的排版也失效
+    if (formattingBaseMode === "translated") {
+      clearFormattedContent();
     }
   };
 
@@ -1473,6 +1600,8 @@ export const initDrawer = () => {
     settingsInputs.extraInstructionsInput.value = translationSettings.extraInstructions;
     settingsInputs.chunkThresholdInput.value = String(translationSettings.chunkThreshold);
     settingsInputs.chunkMaxUnitsInput.value = String(translationSettings.chunkMaxUnits);
+    settingsInputs.aggressivenessSelect.value = formattingSettings.aggressiveness;
+    settingsInputs.formattingExtraInstructionsInput.value = formattingSettings.extraInstructions;
   };
 
   const loadSettings = async () => {
@@ -1494,9 +1623,28 @@ export const initDrawer = () => {
     await settingsLoadPromise;
   };
 
+  const loadFormattingSettings = async () => {
+    if (!formattingSettingsLoadPromise) {
+      formattingSettingsLoadPromise = (async () => {
+        if (!chrome.storage?.local) {
+          formattingSettings = normalizeFormattingSettings(undefined);
+          return;
+        }
+        const stored = await chrome.storage.local.get(FORMATTING_SETTINGS_KEY);
+        formattingSettings = normalizeFormattingSettings(
+          stored[FORMATTING_SETTINGS_KEY] as Partial<FormattingSettings> | undefined
+        );
+        syncSettingsForm();
+      })();
+    }
+
+    await formattingSettingsLoadPromise;
+  };
+
   const openSettings = async () => {
     if (!drawerRefs) return;
     await loadSettings();
+    await loadFormattingSettings();
     syncSettingsForm();
     setSettingsStatus("");
     drawerRefs.settingsOverlay.style.display = "flex";
@@ -1560,6 +1708,28 @@ export const initDrawer = () => {
       translationState !== "translating" && translateDisabled;
 
     drawerRefs.retryButton.style.display = translationState === "error" ? "inline-block" : "none";
+
+    // 智能排版：toggle 仅在 formatted 对应当前 base 视图时可见
+    const formatToggleVisible = !!formattedDoc && formattingBaseMode === contentMode;
+    drawerRefs.formatSegment.style.display = formatToggleVisible ? "flex" : "none";
+    applySegmentStyle(drawerRefs.originalFormatButton, !showFormatted);
+    applySegmentStyle(drawerRefs.formattedFormatButton, showFormatted && !!formattedDoc);
+
+    const formatDisabled = !sourceDoc || !sourceHash;
+    drawerRefs.formatSpinner.style.display = formattingState === "formatting" ? "inline-block" : "none";
+    drawerRefs.formatLabel.textContent =
+      formattingState === "formatting" ? "排版中" : formattedDoc ? "重新排版" : "智能排版";
+    drawerRefs.formatButton.title =
+      formattingState === "formatting"
+        ? "点击取消智能排版"
+        : formatDisabled
+          ? "未检测到可排版内容"
+          : "AI 智能排版：识别金句、要点、步骤等（不改动正文文字）";
+    drawerRefs.formatButton.style.opacity =
+      formattingState === "formatting" ? "0.92" : formatDisabled ? "0.48" : "1";
+    drawerRefs.formatButton.style.cursor =
+      formattingState === "formatting" ? "progress" : formatDisabled ? "not-allowed" : "pointer";
+    drawerRefs.formatButton.disabled = formattingState !== "formatting" && formatDisabled;
 
     const hasActiveContent =
       getCurrentHtml().trim().length > 0 || getCurrentMarkdown().trim().length > 0;
@@ -1625,6 +1795,243 @@ export const initDrawer = () => {
       setStatusMessage("");
     }
     return true;
+  };
+
+  // === 智能排版编排（镜像翻译流程；只取 operations，正文文字始终从 base 搬运） ===
+
+  const buildEffectiveFormattingSettings = (): FormattingSettings => ({
+    ...formattingSettings,
+    apiKey: translationSettings.apiKey,
+    model: translationSettings.model
+  });
+
+  const getFormattingCacheKey = (base: Doc): string =>
+    `${FORMATTING_CACHE_PREFIX}:${hashDoc(base)}:${hashFormatting(buildEffectiveFormattingSettings())}`;
+
+  const readFormattingCache = async (base: Doc): Promise<FormattingCacheEntry | null> => {
+    if (!chrome.storage.session) return null;
+    const key = getFormattingCacheKey(base);
+    const stored = await chrome.storage.session.get(key);
+    return (stored[key] as FormattingCacheEntry | undefined) ?? null;
+  };
+
+  const persistFormattingCache = async (base: Doc, operations: FormattingOperation[]) => {
+    if (!chrome.storage.session) return;
+    const key = getFormattingCacheKey(base);
+    await chrome.storage.session.set({
+      [key]: { operations, createdAt: Date.now() } satisfies FormattingCacheEntry
+    });
+  };
+
+  const applyFormattedOperations = async (
+    base: Doc,
+    operations: FormattingOperation[],
+    options?: { statusMessage?: string; persist?: boolean }
+  ) => {
+    formattedDoc = applyFormattingOperationsToDoc(base, operations);
+    formattingBaseDoc = base;
+    formattingState = "success";
+    formattingJobId = "";
+    showFormatted = true;
+    setFormattingStatus("");
+    rebuildRenderedContent();
+    syncControlState();
+    if (options?.statusMessage) {
+      setStatusMessage(options.statusMessage, "success");
+    }
+    if (options?.persist ?? true) {
+      await persistFormattingCache(base, operations);
+    }
+  };
+
+  const maybeRestoreCachedFormatting = async (
+    base: Doc,
+    baseMode: PreviewContentMode
+  ): Promise<boolean> => {
+    const cached = await readFormattingCache(base);
+    if (!cached?.operations) return false;
+    formattingBaseMode = baseMode;
+    await applyFormattedOperations(base, cached.operations, {
+      statusMessage: "已加载缓存排版",
+      persist: false
+    });
+    return true;
+  };
+
+  const cancelActiveFormatting = (showMessage = true) => {
+    if (formattingState !== "formatting" || !formattingJobId) return;
+    const port = formattingPort ?? ensureFormattingPort();
+    port.postMessage({ type: "formatting/cancel", jobId: formattingJobId });
+    formattingJobId = "";
+    formattingState = formattedDoc ? "success" : "idle";
+    setFormattingStatus("");
+    syncControlState();
+    if (showMessage) {
+      setStatusMessage("智能排版已取消", "info");
+    }
+  };
+
+  const handleBackgroundFormattingState = async (state: FormattingBackgroundState | null) => {
+    if (!state) return;
+    const base = formattingBaseDoc ?? currentBaseDoc();
+    if (!base || hashDoc(base) !== state.sourceHash) return;
+
+    const baseMode: PreviewContentMode =
+      contentMode === "translated" && translatedDoc ? "translated" : "original";
+
+    if (state.status === "formatting") {
+      formattingJobId = state.jobId;
+      formattingState = "formatting";
+      formattingBaseDoc = base;
+      formattingBaseMode = baseMode;
+      setFormattingStatus(getTranslationProgressMessage(state));
+      syncControlState();
+      return;
+    }
+
+    if (state.status === "success" && state.operations) {
+      formattingBaseMode = baseMode;
+      await applyFormattedOperations(base, state.operations, {
+        statusMessage: "已恢复后台排版结果"
+      });
+      return;
+    }
+
+    formattingJobId = "";
+    formattingState = formattedDoc ? "success" : "error";
+    setFormattingStatus("");
+    syncControlState();
+    if (state.message) {
+      setStatusMessage(state.message, "error");
+    }
+  };
+
+  const handleFormattingMessage = (message: FormattingPortServerMessage) => {
+    if (message.type === "formatting/state") {
+      void handleBackgroundFormattingState(message.state);
+      return;
+    }
+
+    if (!formattingJobId || message.jobId !== formattingJobId) return;
+
+    if (message.type === "formatting/progress") {
+      setFormattingStatus(getTranslationProgressMessage(message));
+      syncControlState();
+      return;
+    }
+
+    if (message.type === "formatting/result") {
+      const base = formattingBaseDoc ?? currentBaseDoc();
+      if (!base) {
+        formattingJobId = "";
+        formattingState = "idle";
+        setFormattingStatus("");
+        syncControlState();
+        return;
+      }
+      void applyFormattedOperations(base, message.operations, { statusMessage: "智能排版完成" });
+      return;
+    }
+
+    if (message.message === "智能排版已取消") {
+      formattingJobId = "";
+      formattingState = formattedDoc ? "success" : "idle";
+      setFormattingStatus("");
+      syncControlState();
+      setStatusMessage("智能排版已取消", "info");
+      return;
+    }
+
+    formattingJobId = "";
+    formattingState = formattedDoc ? "success" : "error";
+    setFormattingStatus("");
+    syncControlState();
+    setStatusMessage(message.message, "error");
+  };
+
+  const ensureFormattingPort = () => {
+    if (formattingPort) return formattingPort;
+
+    formattingPort = chrome.runtime.connect({ name: FORMATTING_PORT_NAME });
+    formattingPort.onMessage.addListener((message) => {
+      handleFormattingMessage(message as FormattingPortServerMessage);
+    });
+    formattingPort.onDisconnect.addListener(() => {
+      formattingPort = null;
+      if (suppressNextFormattingDisconnect) {
+        suppressNextFormattingDisconnect = false;
+        return;
+      }
+      if (formattingState === "formatting") {
+        formattingJobId = "";
+        formattingState = formattedDoc ? "success" : "error";
+        setFormattingStatus("");
+        syncControlState();
+        setStatusMessage("智能排版连接已断开，请重试", "error");
+      }
+    });
+
+    return formattingPort;
+  };
+
+  const syncFormattingStateFromBackground = () => {
+    if (!sourceDoc || !sourceHash) return;
+    ensureFormattingPort().postMessage({ type: "formatting/query-state" });
+  };
+
+  const startFormatting = async () => {
+    if (formattingState === "formatting") {
+      cancelActiveFormatting(true);
+      return;
+    }
+
+    await loadSettings();
+    await loadFormattingSettings();
+    if (!sourceDoc) {
+      await refreshSource({ announce: false, activateCachedTranslation: false });
+    }
+
+    const base = currentBaseDoc();
+    if (!base) {
+      setStatusMessage("未检测到可排版内容", "error");
+      return;
+    }
+
+    if (!translationSettings.apiKey || !translationSettings.model) {
+      setStatusMessage("请先在设置中补全 API Key 和模型", "error");
+      await openSettings();
+      return;
+    }
+
+    const baseMode: PreviewContentMode =
+      contentMode === "translated" && translatedDoc ? "translated" : "original";
+
+    const restored = await maybeRestoreCachedFormatting(base, baseMode);
+    if (restored) {
+      syncControlState();
+      return;
+    }
+
+    const port = ensureFormattingPort();
+    formattingState = "formatting";
+    formattingBaseMode = baseMode;
+    formattingBaseDoc = base;
+    formattingJobId =
+      typeof crypto.randomUUID === "function"
+        ? `formatting_${crypto.randomUUID()}`
+        : `formatting_${Date.now()}`;
+    setFormattingStatus("步骤 1/3：分析文档结构");
+    syncControlState();
+
+    port.postMessage({
+      type: "formatting/start",
+      payload: {
+        jobId: formattingJobId,
+        sourceHash: hashDoc(base),
+        doc: base,
+        settings: buildEffectiveFormattingSettings()
+      }
+    });
   };
 
   const cancelActiveTranslation = (showMessage = true) => {
@@ -1941,12 +2348,26 @@ export const initDrawer = () => {
         setButtonDisabled(drawerRefs.settingsSaveButton, false);
         return;
       }
+      const nextFormattingSettings = normalizeFormattingSettings({
+        ...formattingSettings,
+        aggressiveness: settingsInputs.aggressivenessSelect.value as FormattingAggressiveness,
+        extraInstructions: settingsInputs.formattingExtraInstructionsInput.value
+      });
       await chrome.storage.local.set({
-        [TRANSLATION_SETTINGS_KEY]: nextSettings
+        [TRANSLATION_SETTINGS_KEY]: nextSettings,
+        [FORMATTING_SETTINGS_KEY]: nextFormattingSettings
       });
       translationSettings = nextSettings;
+      formattingSettings = nextFormattingSettings;
       syncSettingsForm();
       closeSettings();
+
+      // 设置变更后已生成的智能排版可能不再匹配新配置：清空并刷新（重排版可命中缓存秒恢复）
+      cancelActiveFormatting(false);
+      clearFormattedContent();
+      formattingState = "idle";
+      rebuildRenderedContent();
+      syncControlState();
 
       const currentSettingsHash = getSettingsHash(translationSettings);
       if (previousSettingsHash !== currentSettingsHash) {
@@ -2003,9 +2424,12 @@ export const initDrawer = () => {
     if (pageChanged || sourceChanged) {
       cancelActiveTranslation(false);
       clearTranslatedContent();
+      cancelActiveFormatting(false);
+      clearFormattedContent();
       cancelImagePreload();
       imageMap = new Map();
       translationState = !pageChanged && hadTranslatedContent ? "stale" : "idle";
+      formattingState = "idle";
       contentMode = "original";
     }
 
@@ -2069,6 +2493,9 @@ export const initDrawer = () => {
     suppressNextTranslationDisconnect = Boolean(translationPort);
     translationPort?.disconnect();
     translationPort = null;
+    suppressNextFormattingDisconnect = Boolean(formattingPort);
+    formattingPort?.disconnect();
+    formattingPort = null;
     cancelImagePreload();
     imageMap = new Map();
     drawerRefs?.themeMenu.remove();
@@ -2198,6 +2625,23 @@ export const initDrawer = () => {
       void startTranslation();
     });
 
+    drawerRefs.formatButton.addEventListener("click", () => {
+      void startFormatting();
+    });
+
+    drawerRefs.originalFormatButton.addEventListener("click", () => {
+      showFormatted = false;
+      renderPreview();
+      syncControlState();
+    });
+
+    drawerRefs.formattedFormatButton.addEventListener("click", () => {
+      if (!formattedDoc) return;
+      showFormatted = true;
+      renderPreview();
+      syncControlState();
+    });
+
     bindClickableControl(drawerRefs.retryButton);
     drawerRefs.retryButton.addEventListener("click", () => {
       void startTranslation();
@@ -2286,7 +2730,11 @@ export const initDrawer = () => {
 
       try {
         await writeClipboard(html, text);
-        const msg = contentMode === "translated" ? "已复制译文为公众号格式" : "已复制原文为公众号格式";
+        const msg = isFormattedActive()
+          ? "已复制智能排版稿为公众号格式"
+          : contentMode === "translated"
+            ? "已复制译文为公众号格式"
+            : "已复制原文为公众号格式";
         setStatusMessage(msg, "success");
         showToast(msg);
       } catch (error) {
@@ -2303,7 +2751,11 @@ export const initDrawer = () => {
 
       try {
         await navigator.clipboard.writeText(markdown);
-        const msg = contentMode === "translated" ? "已复制译文为 Markdown" : "已复制原文为 Markdown";
+        const msg = isFormattedActive()
+          ? "已复制智能排版稿为 Markdown"
+          : contentMode === "translated"
+            ? "已复制译文为 Markdown"
+            : "已复制原文为 Markdown";
         setStatusMessage(msg, "success");
         showToast(msg);
       } catch (error) {
@@ -2375,6 +2827,7 @@ export const initDrawer = () => {
     void (async () => {
       await refreshSource({ announce: false, activateCachedTranslation: false });
       syncTranslationStateFromBackground();
+      syncFormattingStateFromBackground();
       syncControlState();
     })();
   };

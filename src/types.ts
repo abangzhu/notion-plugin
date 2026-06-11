@@ -12,7 +12,9 @@ export type Block =
   | DividerBlock
   | ImageBlock
   | CodeBlock
-  | TableBlock;
+  | TableBlock
+  | EmphasisBlock
+  | StepsBlock;
 
 export type HeadingBlock = {
   type: "heading";
@@ -28,6 +30,8 @@ export type ParagraphBlock = {
 export type QuoteBlock = {
   type: "quote";
   children: Inline[];
+  // "card" 触发金句卡渲染（单块级别）；缺省时回退主题级 StyleTokens.quoteVariant
+  variant?: "card";
 };
 
 export type CalloutBlock = {
@@ -63,6 +67,23 @@ export type TableRow = {
 };
 
 export type TableCell = {
+  children: Inline[];
+};
+
+// 重点/强调卡片：醒目色块，用于突出核心结论段（比 callout 更强、比金句卡更段落化）
+export type EmphasisBlock = {
+  type: "emphasis";
+  children: Inline[];
+};
+
+// 步骤/序号卡：把连续的流程性内容折叠成带序号徽标的卡片
+export type StepsBlock = {
+  type: "steps";
+  ordered: boolean;
+  items: StepItem[];
+};
+
+export type StepItem = {
   children: Inline[];
 };
 

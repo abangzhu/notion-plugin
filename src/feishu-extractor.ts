@@ -852,6 +852,12 @@ const hashBlock = (block: Block): string => {
       return `img:${block.src}`;
     case "divider":
       return "divider";
+    case "emphasis":
+      return `emphasis:${block.children.map((i) => normalizeForHash(i.content)).join("")}`;
+    case "steps":
+      return `steps:${block.ordered}:${block.items
+        .map((i) => i.children.map((c) => normalizeForHash(c.content)).join(""))
+        .join("|")}`;
   }
 };
 
