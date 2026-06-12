@@ -219,7 +219,12 @@ const splitIntoConsecutiveRuns = (sorted: number[]): number[][] => {
   return runs;
 };
 
-export const applyFormattingOperationsToDoc = (doc: Doc, operations: FormattingOperation[]): Doc => {
+// 排版应用 + 锚点映射：返回排版后的 doc，以及 base 块索引 → 输出块索引 的映射。
+// 映射用于把"锚定到 base 块"的配图插到排版后对应的输出位置（被合并进 steps 的多块都映射到该 steps 块）。
+export const applyFormattingWithAnchors = (
+  doc: Doc,
+  operations: FormattingOperation[]
+): { doc: Doc; anchorOf: Map<number, number> } => {
   const clone = structuredClone(doc);
   const blocks = clone.blocks;
 
@@ -259,10 +264,16 @@ export const applyFormattingOperationsToDoc = (doc: Doc, operations: FormattingO
   });
 
   const out: Block[] = [];
+  const anchorOf = new Map<number, number>();
   for (let index = 0; index < blocks.length; ) {
     const group = groups.find((plan) => plan.start === index);
     if (group) {
+      const outIndex = out.length;
       out.push(buildStepsBlock(blocks.slice(group.start, group.end + 1), group.ordered));
+      // 组内每个 base 块都映射到这个 steps 输出块
+      for (let inner = group.start; inner <= group.end; inner += 1) {
+        anchorOf.set(inner, outIndex);
+      }
       index = group.end + 1;
       continue;
     }
@@ -271,13 +282,18 @@ export const applyFormattingOperationsToDoc = (doc: Doc, operations: FormattingO
       continue;
     }
     const conversion = convertAt.get(index);
+    const outIndex = out.length;
     out.push(conversion ? convertBlock(blocks[index], conversion) : blocks[index]);
+    anchorOf.set(index, outIndex);
     if (dividerAfter.has(index)) out.push({ type: "divider" });
     index += 1;
   }
 
-  return { ...clone, blocks: out };
+  return { doc: { ...clone, blocks: out }, anchorOf };
 };
+
+export const applyFormattingOperationsToDoc = (doc: Doc, operations: FormattingOperation[]): Doc =>
+  applyFormattingWithAnchors(doc, operations).doc;
 
 // dev/测试护栏：校验排版前后正文 inline 文本逐字一致（顺序也一致）。
 // 过滤无文字的块（如插入的分隔符），它们不携带正文，只影响结构。

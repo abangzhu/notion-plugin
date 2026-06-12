@@ -1,3 +1,4 @@
+import { applyFormattingWithAnchors, type FormattingOperation } from "./formatting";
 import { DEFAULT_TRANSLATION_MODEL } from "./translation-config";
 import type { Block, Doc, ImageBlock } from "./types";
 
@@ -149,4 +150,43 @@ export const applyIllustrationsToDoc = (doc: Doc, items: IllustrationItem[]): Do
   });
 
   return { ...clone, blocks: out };
+};
+
+// 统一增强：排版 + 配图都锚定 base 块索引，组合应用使两者顺序无关。
+// formatOps 转换/合并/插分隔符 → 产出 anchorOf 映射 → 配图按映射插到排版后对应输出位置。
+// 先配图后排版、先排版后配图，结果一致，配图不会因重新排版而错位或消失。
+export const applyEnhancementsToDoc = (
+  base: Doc,
+  operations: FormattingOperation[],
+  items: IllustrationItem[]
+): Doc => {
+  const { doc: formatted, anchorOf } = applyFormattingWithAnchors(base, operations);
+  if (items.length === 0) return formatted;
+
+  const baseLength = base.blocks.length;
+  const byOutIndex = new Map<number, ImageBlock[]>();
+  items.forEach((item) => {
+    const baseIndex = indexOfBlockId(item.afterBlockId, baseLength);
+    if (baseIndex < 0) {
+      console.warn(`配图位置 ${item.afterBlockId} 不在当前文档（共 ${baseLength} 块），已跳过`);
+      return;
+    }
+    const outIndex = anchorOf.get(baseIndex);
+    if (outIndex == null) return; // 理论上每个 base 索引都有锚点；防御性跳过
+    const image: ImageBlock = { type: "image", src: item.dataUri, alt: item.alt };
+    const list = byOutIndex.get(outIndex) ?? [];
+    list.push(image);
+    byOutIndex.set(outIndex, list);
+  });
+
+  if (byOutIndex.size === 0) return formatted;
+
+  const out: Block[] = [];
+  formatted.blocks.forEach((block, index) => {
+    out.push(block);
+    const images = byOutIndex.get(index);
+    if (images) out.push(...images);
+  });
+
+  return { ...formatted, blocks: out };
 };
