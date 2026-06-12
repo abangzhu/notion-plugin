@@ -2409,7 +2409,11 @@ export const initDrawer = () => {
         illustrationState = illustrations ? "success" : "idle";
         setIllustrationStatus("");
         syncControlState();
-        setStatusMessage("未生成任何配图", "info");
+        const reason =
+          (message.requested ?? 0) === 0
+            ? "AI 未规划出配图位置（文档可能太短或无合适位置）"
+            : "未生成任何配图";
+        setStatusMessage(reason, "info");
         return;
       }
       const baseMode: PreviewContentMode =
