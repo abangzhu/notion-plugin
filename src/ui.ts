@@ -25,6 +25,14 @@ import {
   normalizeFormattingSettings
 } from "./formatting";
 import {
+  applyIllustrationsToDoc,
+  DEFAULT_ILLUSTRATION_SETTINGS,
+  hashIllustration,
+  ILLUSTRATION_PORT_NAME,
+  ILLUSTRATION_SETTINGS_KEY,
+  normalizeIllustrationSettings
+} from "./illustration";
+import {
   DEFAULT_COLORS,
   DEFAULT_TYPO,
   FONT_STACK_DEFAULT,
@@ -48,6 +56,13 @@ import type {
   FormattingSettings,
   FormattingState
 } from "./formatting";
+import type {
+  IllustrationBackgroundState,
+  IllustrationItem,
+  IllustrationPortServerMessage,
+  IllustrationSettings,
+  IllustrationState
+} from "./illustration";
 import type { RenderOptions, ThemeColors, Typography } from "./theme";
 import type { Doc } from "./types";
 import {
@@ -61,9 +76,13 @@ import type { ApiTestResult } from "./translation-service";
 
 const DRAWER_ID = "__notion_wechat_drawer";
 const DRAWER_STYLE_ID = "__notion_wechat_drawer_style";
+const DRAWER_WIDTH_KEY = "drawerWidth";
+const DRAWER_MIN_WIDTH = 380;
+const DRAWER_DEFAULT_WIDTH = 686;
 const ACCENT = "#10b981";
 const TRANSLATION_CACHE_PREFIX = "translationCache";
 const FORMATTING_CACHE_PREFIX = "formattingCache";
+const ILLUSTRATION_CACHE_PREFIX = "illustrationCache";
 
 
 type ThemePreset = {
@@ -88,6 +107,11 @@ type TranslationCacheEntry = {
 
 type FormattingCacheEntry = {
   operations: FormattingOperation[];
+  createdAt: number;
+};
+
+type IllustrationCacheEntry = {
+  items: IllustrationItem[];
   createdAt: number;
 };
 
@@ -650,7 +674,7 @@ const createDrawer = () => {
   container.style.top = "0";
   container.style.right = "0";
   container.style.height = "100vh";
-  container.style.width = "min(686px, 100vw)";
+  container.style.width = `min(${DRAWER_DEFAULT_WIDTH}px, 100vw)`;
   container.style.zIndex = "2147483647";
   container.style.background = "#f5f5f5";
   container.style.boxShadow = "-4px 0 20px rgba(0,0,0,0.12)";
@@ -659,6 +683,85 @@ const createDrawer = () => {
   container.style.fontFamily = FONT_STACK_DEFAULT;
   container.style.animation = "0.3s ease-in-out 0s 1 normal none running sliceIn";
   container.style.overflow = "hidden";
+
+  // 左缘拖拽手柄：抽屉锚定右侧，指针左移 → 宽度增大。
+  const resizeHandle = document.createElement("div");
+  resizeHandle.style.position = "absolute";
+  resizeHandle.style.top = "0";
+  resizeHandle.style.left = "0";
+  resizeHandle.style.width = "10px";
+  resizeHandle.style.height = "100%";
+  resizeHandle.style.cursor = "ew-resize";
+  resizeHandle.style.zIndex = "60";
+  resizeHandle.style.background = "transparent";
+  resizeHandle.title = "拖拽调整抽屉宽度";
+
+  const resizeGrip = document.createElement("div");
+  resizeGrip.style.position = "absolute";
+  resizeGrip.style.top = "50%";
+  resizeGrip.style.left = "3px";
+  resizeGrip.style.width = "4px";
+  resizeGrip.style.height = "48px";
+  resizeGrip.style.transform = "translateY(-50%)";
+  resizeGrip.style.borderRadius = "999px";
+  resizeGrip.style.background = "#d1d5db";
+  resizeGrip.style.transition = "background 0.15s ease";
+  resizeHandle.appendChild(resizeGrip);
+
+  let resizing = false;
+
+  const applyDrawerWidth = (width: number) => {
+    const max = Math.max(DRAWER_MIN_WIDTH, window.innerWidth);
+    const clamped = Math.min(max, Math.max(DRAWER_MIN_WIDTH, Math.round(width)));
+    container.style.width = `${clamped}px`;
+  };
+
+  resizeHandle.addEventListener("mouseenter", () => {
+    resizeGrip.style.background = ACCENT;
+  });
+  resizeHandle.addEventListener("mouseleave", () => {
+    if (!resizing) resizeGrip.style.background = "#d1d5db";
+  });
+
+  resizeHandle.addEventListener("pointerdown", (event) => {
+    event.preventDefault();
+    resizing = true;
+    const startX = event.clientX;
+    const startWidth = container.getBoundingClientRect().width;
+    resizeHandle.setPointerCapture(event.pointerId);
+    container.style.animation = "none"; // 拖拽时禁用入场动画干扰
+    resizeGrip.style.background = ACCENT;
+    document.body.style.userSelect = "none";
+
+    const onMove = (moveEvent: PointerEvent) => {
+      if (!resizing) return;
+      applyDrawerWidth(startWidth + (startX - moveEvent.clientX));
+    };
+
+    const onUp = () => {
+      resizing = false;
+      document.body.style.userSelect = "";
+      resizeGrip.style.background = "#d1d5db";
+      resizeHandle.removeEventListener("pointermove", onMove);
+      resizeHandle.removeEventListener("pointerup", onUp);
+      const finalWidth = container.getBoundingClientRect().width;
+      void chrome.storage.local
+        .set({ [DRAWER_WIDTH_KEY]: finalWidth })
+        .catch(() => undefined);
+    };
+
+    resizeHandle.addEventListener("pointermove", onMove);
+    resizeHandle.addEventListener("pointerup", onUp);
+  });
+
+  // 恢复上次保存的宽度（异步，创建后立即应用）
+  void chrome.storage.local
+    .get(DRAWER_WIDTH_KEY)
+    .then((stored) => {
+      const saved = Number(stored?.[DRAWER_WIDTH_KEY]);
+      if (Number.isFinite(saved) && saved > 0) applyDrawerWidth(saved);
+    })
+    .catch(() => undefined);
 
   const toolbar = document.createElement("div");
   toolbar.style.padding = "16px";
@@ -692,6 +795,11 @@ const createDrawer = () => {
   const formatSpinner = formatControls.spinner;
   const formatLabel = formatControls.labelElement;
 
+  const illustrateControls = createLoadingButton("智能配图");
+  const illustrateButton = illustrateControls.button;
+  const illustrateSpinner = illustrateControls.spinner;
+  const illustrateLabel = illustrateControls.labelElement;
+
   const contentSegment = document.createElement("div");
   contentSegment.style.display = "none";
   contentSegment.style.gap = "6px";
@@ -713,8 +821,8 @@ const createDrawer = () => {
   formatSegment.style.borderRadius = "14px";
   formatSegment.style.background = "#fff";
 
-  const originalFormatButton = createSegment("原排版", true);
-  const formattedFormatButton = createSegment("AI排版");
+  const originalFormatButton = createSegment("原稿", true);
+  const formattedFormatButton = createSegment("增强稿");
   formatSegment.appendChild(originalFormatButton);
   formatSegment.appendChild(formattedFormatButton);
 
@@ -735,6 +843,7 @@ const createDrawer = () => {
 
   rowTopLeft.appendChild(translateButton);
   rowTopLeft.appendChild(formatButton);
+  rowTopLeft.appendChild(illustrateButton);
   rowTopLeft.appendChild(contentSegment);
   rowTopLeft.appendChild(formatSegment);
   rowTopLeft.appendChild(previewSegment);
@@ -968,6 +1077,14 @@ const createDrawer = () => {
   ]);
   const formattingExtraInstructionsInput = createTextArea(4);
 
+  const maxImagesSelect = createSelect([
+    { value: "2", label: "2 张" },
+    { value: "3", label: "3 张" },
+    { value: "4", label: "4 张" }
+  ]);
+
+  const illustrationStylePromptInput = createTextArea(3);
+
   const targetLanguageSegment = document.createElement("div");
   targetLanguageSegment.style.display = "flex";
   targetLanguageSegment.style.gap = "6px";
@@ -1011,10 +1128,19 @@ const createDrawer = () => {
     createField("排版力度", aggressivenessSelect, "保守=高置信才改；大胆=积极重构版式"),
     createField("额外说明", formattingExtraInstructionsInput, "对智能排版的额外要求（不会改动正文文字）")
   ];
+  const illustrationFields = [
+    createField("配图数量上限", maxImagesSelect, "16:9 宽图；生图较慢，数量越多越慢"),
+    createField(
+      "风格提示词",
+      illustrationStylePromptInput,
+      "英文最佳，拼到内置极简风之后。例：warm pastel tones, hand-drawn texture"
+    )
+  ];
 
   settingsBody.appendChild(createCollapsibleSection("基础配置", true, basicFields));
   settingsBody.appendChild(createCollapsibleSection("翻译风格", false, styleFields));
   settingsBody.appendChild(createCollapsibleSection("智能排版", false, formattingFields));
+  settingsBody.appendChild(createCollapsibleSection("智能配图", false, illustrationFields));
   settingsBody.appendChild(createCollapsibleSection("高级选项", false, advancedFields));
 
   [
@@ -1029,7 +1155,9 @@ const createDrawer = () => {
     chunkThresholdInput,
     chunkMaxUnitsInput,
     aggressivenessSelect,
-    formattingExtraInstructionsInput
+    formattingExtraInstructionsInput,
+    maxImagesSelect,
+    illustrationStylePromptInput
   ].forEach((control) => bindEditableControl(control));
   bindClickableControl(apiKeyToggleButton);
 
@@ -1080,6 +1208,7 @@ const createDrawer = () => {
   container.appendChild(previewScroll);
   container.appendChild(footer);
   container.appendChild(settingsOverlay);
+  container.appendChild(resizeHandle);
 
   return {
     container,
@@ -1102,6 +1231,9 @@ const createDrawer = () => {
     formatButton,
     formatSpinner,
     formatLabel,
+    illustrateButton,
+    illustrateSpinner,
+    illustrateLabel,
     formatSegment,
     originalFormatButton,
     formattedFormatButton,
@@ -1133,7 +1265,9 @@ const createDrawer = () => {
       chunkThresholdInput,
       chunkMaxUnitsInput,
       aggressivenessSelect,
-      formattingExtraInstructionsInput
+      formattingExtraInstructionsInput,
+      maxImagesSelect,
+      illustrationStylePromptInput
     }
   };
 };
@@ -1163,14 +1297,16 @@ export const initDrawer = () => {
   let translatedMarkdown = "";
   let sourceLanguage: DetectedLanguage = "unknown";
 
-  // 智能排版：formattedDoc 基于某个 base（原文或译文），showFormatted 控制是否显示
-  let formattedDoc: Doc | null = null;
-  let formattedHtml = "";
-  let formattedText = "";
-  let formattedMarkdown = "";
-  let showFormatted = false;
-  let formattingBaseMode: PreviewContentMode = "original";
-  let formattingBaseDoc: Doc | null = null;
+  // 增强管线：存操作（排版指令 + 配图项），enhancedDoc 按 base 派生，可叠加。
+  // enhancedDoc = applyIllustrations(applyFormatting(base, formatOps), illustrations)
+  let formatOps: FormattingOperation[] | null = null;
+  let illustrations: IllustrationItem[] | null = null;
+  let enhancedDoc: Doc | null = null;
+  let enhancedHtml = "";
+  let enhancedText = "";
+  let enhancedMarkdown = "";
+  let showEnhanced = false;
+  let enhancedBaseMode: PreviewContentMode = "original";
 
   let previewMode: PreviewFormatMode = "wechat";
   let contentMode: PreviewContentMode = "original";
@@ -1185,6 +1321,11 @@ export const initDrawer = () => {
   let formattingPort: chrome.runtime.Port | null = null;
   let suppressNextFormattingDisconnect = false;
 
+  let illustrationState: IllustrationState = "idle";
+  let illustrationJobId = "";
+  let illustrationPort: chrome.runtime.Port | null = null;
+  let suppressNextIllustrationDisconnect = false;
+
   let currentTheme = THEME_PRESETS[0];
   let currentFont = FONT_PRESETS[0];
   let fontScale = 1;
@@ -1195,10 +1336,14 @@ export const initDrawer = () => {
   let formattingSettings = DEFAULT_FORMATTING_SETTINGS;
   let formattingSettingsLoadPromise: Promise<void> | null = null;
 
+  let illustrationSettings = DEFAULT_ILLUSTRATION_SETTINGS;
+  let illustrationSettingsLoadPromise: Promise<void> | null = null;
+
   let statusMessage = "";
   let statusTone: StatusTone = "info";
   let translationStatusMessage = "";
   let formattingStatusMessage = "";
+  let illustrationStatusMessage = "";
 
   let imageMap: ImageMap = new Map();
   let imagePreloadAborted = false;
@@ -1222,7 +1367,8 @@ export const initDrawer = () => {
 
   const isJobStatusActive = (): boolean =>
     (translationState === "translating" && translationStatusMessage.trim().length > 0) ||
-    (formattingState === "formatting" && formattingStatusMessage.trim().length > 0);
+    (formattingState === "formatting" && formattingStatusMessage.trim().length > 0) ||
+    (illustrationState === "illustrating" && illustrationStatusMessage.trim().length > 0);
 
   const getVisibleStatusMessage = (): string => {
     if (translationState === "translating" && translationStatusMessage.trim().length > 0) {
@@ -1230,6 +1376,9 @@ export const initDrawer = () => {
     }
     if (formattingState === "formatting" && formattingStatusMessage.trim().length > 0) {
       return formattingStatusMessage;
+    }
+    if (illustrationState === "illustrating" && illustrationStatusMessage.trim().length > 0) {
+      return illustrationStatusMessage;
     }
     return statusMessage;
   };
@@ -1265,6 +1414,11 @@ export const initDrawer = () => {
 
   const setFormattingStatus = (message: string) => {
     formattingStatusMessage = message;
+    updateStatus();
+  };
+
+  const setIllustrationStatus = (message: string) => {
+    illustrationStatusMessage = message;
     updateStatus();
   };
 
@@ -1391,30 +1545,44 @@ export const initDrawer = () => {
     return `${TRANSLATION_CACHE_PREFIX}:${sourceHash}:${getSettingsHash(translationSettings)}`;
   };
 
-  // 智能排版仅在它所基于的 base 视图（原文/译文）下可切换显示
-  const isFormattedActive = (): boolean =>
-    showFormatted && !!formattedDoc && formattingBaseMode === contentMode;
+  // 增强稿仅在它所基于的 base 视图（原文/译文）下可切换显示
+  const isEnhancedActive = (): boolean =>
+    showEnhanced && !!enhancedDoc && enhancedBaseMode === contentMode;
 
   const getCurrentHtml = (): string => {
-    if (isFormattedActive()) return formattedHtml;
+    if (isEnhancedActive()) return enhancedHtml;
     if (contentMode === "translated" && translatedDoc) return translatedHtml;
     return originalHtml;
   };
 
   const getCurrentMarkdown = (): string => {
-    if (isFormattedActive()) return formattedMarkdown;
+    if (isEnhancedActive()) return enhancedMarkdown;
     if (contentMode === "translated" && translatedDoc) return translatedMarkdown;
     return originalMarkdown;
   };
 
   const getCurrentText = (): string => {
-    if (isFormattedActive()) return formattedText;
+    if (isEnhancedActive()) return enhancedText;
     if (contentMode === "translated" && translatedDoc) return translatedText;
     return originalText;
   };
 
+  // 当前增强的 base（按 contentMode 取原文/译文）
   const currentBaseDoc = (): Doc | null =>
     contentMode === "translated" && translatedDoc ? translatedDoc : sourceDoc;
+
+  // 按 enhancedBaseMode 取增强所基于的 base
+  const enhancedBaseDoc = (): Doc | null =>
+    enhancedBaseMode === "translated" && translatedDoc ? translatedDoc : sourceDoc;
+
+  // 增强稿派生：先应用排版指令，再插入配图
+  const computeEnhancedDoc = (): Doc | null => {
+    const base = enhancedBaseDoc();
+    if (!base) return null;
+    if (!formatOps && !illustrations) return null;
+    const formatted = formatOps ? applyFormattingOperationsToDoc(base, formatOps) : base;
+    return illustrations ? applyIllustrationsToDoc(formatted, illustrations) : formatted;
+  };
 
   const renderPreview = () => {
     if (!drawerRefs) return;
@@ -1520,26 +1688,28 @@ export const initDrawer = () => {
       translatedMarkdown = "";
     }
 
-    if (formattedDoc) {
-      formattedHtml = renderDocToHtml(formattedDoc, renderOptions, imageMap);
-      formattedText = renderDocToText(formattedDoc);
-      formattedMarkdown = renderDocToMarkdown(formattedDoc);
+    enhancedDoc = computeEnhancedDoc();
+    if (enhancedDoc) {
+      enhancedHtml = renderDocToHtml(enhancedDoc, renderOptions, imageMap);
+      enhancedText = renderDocToText(enhancedDoc);
+      enhancedMarkdown = renderDocToMarkdown(enhancedDoc);
     } else {
-      formattedHtml = "";
-      formattedText = "";
-      formattedMarkdown = "";
+      enhancedHtml = "";
+      enhancedText = "";
+      enhancedMarkdown = "";
     }
 
     renderPreview();
   };
 
-  const clearFormattedContent = () => {
-    formattedDoc = null;
-    formattedHtml = "";
-    formattedText = "";
-    formattedMarkdown = "";
-    formattingBaseDoc = null;
-    showFormatted = false;
+  const clearEnhancedContent = () => {
+    formatOps = null;
+    illustrations = null;
+    enhancedDoc = null;
+    enhancedHtml = "";
+    enhancedText = "";
+    enhancedMarkdown = "";
+    showEnhanced = false;
   };
 
   const clearTranslatedContent = () => {
@@ -1550,9 +1720,9 @@ export const initDrawer = () => {
     if (contentMode === "translated") {
       contentMode = "original";
     }
-    // 译文消失后，基于译文的排版也失效
-    if (formattingBaseMode === "translated") {
-      clearFormattedContent();
+    // 译文消失后，基于译文的增强（排版/配图）也失效
+    if (enhancedBaseMode === "translated") {
+      clearEnhancedContent();
     }
   };
 
@@ -1602,6 +1772,12 @@ export const initDrawer = () => {
     settingsInputs.chunkMaxUnitsInput.value = String(translationSettings.chunkMaxUnits);
     settingsInputs.aggressivenessSelect.value = formattingSettings.aggressiveness;
     settingsInputs.formattingExtraInstructionsInput.value = formattingSettings.extraInstructions;
+    ensureSelectValue(
+      settingsInputs.maxImagesSelect,
+      String(illustrationSettings.maxImages),
+      `${illustrationSettings.maxImages} 张`
+    );
+    settingsInputs.illustrationStylePromptInput.value = illustrationSettings.stylePrompt;
   };
 
   const loadSettings = async () => {
@@ -1641,10 +1817,29 @@ export const initDrawer = () => {
     await formattingSettingsLoadPromise;
   };
 
+  const loadIllustrationSettings = async () => {
+    if (!illustrationSettingsLoadPromise) {
+      illustrationSettingsLoadPromise = (async () => {
+        if (!chrome.storage?.local) {
+          illustrationSettings = normalizeIllustrationSettings(undefined);
+          return;
+        }
+        const stored = await chrome.storage.local.get(ILLUSTRATION_SETTINGS_KEY);
+        illustrationSettings = normalizeIllustrationSettings(
+          stored[ILLUSTRATION_SETTINGS_KEY] as Partial<IllustrationSettings> | undefined
+        );
+        syncSettingsForm();
+      })();
+    }
+
+    await illustrationSettingsLoadPromise;
+  };
+
   const openSettings = async () => {
     if (!drawerRefs) return;
     await loadSettings();
     await loadFormattingSettings();
+    await loadIllustrationSettings();
     syncSettingsForm();
     setSettingsStatus("");
     drawerRefs.settingsOverlay.style.display = "flex";
@@ -1709,16 +1904,17 @@ export const initDrawer = () => {
 
     drawerRefs.retryButton.style.display = translationState === "error" ? "inline-block" : "none";
 
-    // 智能排版：toggle 仅在 formatted 对应当前 base 视图时可见
-    const formatToggleVisible = !!formattedDoc && formattingBaseMode === contentMode;
-    drawerRefs.formatSegment.style.display = formatToggleVisible ? "flex" : "none";
-    applySegmentStyle(drawerRefs.originalFormatButton, !showFormatted);
-    applySegmentStyle(drawerRefs.formattedFormatButton, showFormatted && !!formattedDoc);
+    // 增强稿（排版/配图叠加）：toggle 仅在 enhancedDoc 对应当前 base 视图时可见
+    const enhancedToggleVisible = !!enhancedDoc && enhancedBaseMode === contentMode;
+    drawerRefs.formatSegment.style.display = enhancedToggleVisible ? "flex" : "none";
+    applySegmentStyle(drawerRefs.originalFormatButton, !showEnhanced);
+    applySegmentStyle(drawerRefs.formattedFormatButton, showEnhanced && !!enhancedDoc);
 
+    const hasFormatOps = !!formatOps && formatOps.length > 0;
     const formatDisabled = !sourceDoc || !sourceHash;
     drawerRefs.formatSpinner.style.display = formattingState === "formatting" ? "inline-block" : "none";
     drawerRefs.formatLabel.textContent =
-      formattingState === "formatting" ? "排版中" : formattedDoc ? "重新排版" : "智能排版";
+      formattingState === "formatting" ? "排版中" : hasFormatOps ? "重新排版" : "智能排版";
     drawerRefs.formatButton.title =
       formattingState === "formatting"
         ? "点击取消智能排版"
@@ -1730,6 +1926,26 @@ export const initDrawer = () => {
     drawerRefs.formatButton.style.cursor =
       formattingState === "formatting" ? "progress" : formatDisabled ? "not-allowed" : "pointer";
     drawerRefs.formatButton.disabled = formattingState !== "formatting" && formatDisabled;
+
+    // 智能配图：base = 当前 base doc 排版后的结果
+    const hasIllustrations = !!illustrations && illustrations.length > 0;
+    const illustrateDisabled = !sourceDoc || !sourceHash;
+    drawerRefs.illustrateSpinner.style.display =
+      illustrationState === "illustrating" ? "inline-block" : "none";
+    drawerRefs.illustrateLabel.textContent =
+      illustrationState === "illustrating" ? "配图中" : hasIllustrations ? "重新配图" : "智能配图";
+    drawerRefs.illustrateButton.title =
+      illustrationState === "illustrating"
+        ? "点击取消智能配图"
+        : illustrateDisabled
+          ? "未检测到可配图内容"
+          : "AI 智能配图：在合适位置生成极简插画（可与排版叠加）";
+    drawerRefs.illustrateButton.style.opacity =
+      illustrationState === "illustrating" ? "0.92" : illustrateDisabled ? "0.48" : "1";
+    drawerRefs.illustrateButton.style.cursor =
+      illustrationState === "illustrating" ? "progress" : illustrateDisabled ? "not-allowed" : "pointer";
+    drawerRefs.illustrateButton.disabled =
+      illustrationState !== "illustrating" && illustrateDisabled;
 
     const hasActiveContent =
       getCurrentHtml().trim().length > 0 || getCurrentMarkdown().trim().length > 0;
@@ -1823,16 +2039,22 @@ export const initDrawer = () => {
     });
   };
 
-  const applyFormattedOperations = async (
+  // 设置排版指令：存 ops、显示增强稿。结构变（ops 不同）→ 清空已有配图（旧位置失效）
+  const setFormatOps = async (
     base: Doc,
+    baseMode: PreviewContentMode,
     operations: FormattingOperation[],
     options?: { statusMessage?: string; persist?: boolean }
   ) => {
-    formattedDoc = applyFormattingOperationsToDoc(base, operations);
-    formattingBaseDoc = base;
+    const opsChanged = JSON.stringify(formatOps) !== JSON.stringify(operations);
+    formatOps = operations;
+    if (opsChanged) {
+      illustrations = null;
+    }
+    enhancedBaseMode = baseMode;
     formattingState = "success";
     formattingJobId = "";
-    showFormatted = true;
+    showEnhanced = true;
     setFormattingStatus("");
     rebuildRenderedContent();
     syncControlState();
@@ -1850,8 +2072,7 @@ export const initDrawer = () => {
   ): Promise<boolean> => {
     const cached = await readFormattingCache(base);
     if (!cached?.operations) return false;
-    formattingBaseMode = baseMode;
-    await applyFormattedOperations(base, cached.operations, {
+    await setFormatOps(base, baseMode, cached.operations, {
       statusMessage: "已加载缓存排版",
       persist: false
     });
@@ -1863,7 +2084,7 @@ export const initDrawer = () => {
     const port = formattingPort ?? ensureFormattingPort();
     port.postMessage({ type: "formatting/cancel", jobId: formattingJobId });
     formattingJobId = "";
-    formattingState = formattedDoc ? "success" : "idle";
+    formattingState = formatOps ? "success" : "idle";
     setFormattingStatus("");
     syncControlState();
     if (showMessage) {
@@ -1873,7 +2094,7 @@ export const initDrawer = () => {
 
   const handleBackgroundFormattingState = async (state: FormattingBackgroundState | null) => {
     if (!state) return;
-    const base = formattingBaseDoc ?? currentBaseDoc();
+    const base = currentBaseDoc();
     if (!base || hashDoc(base) !== state.sourceHash) return;
 
     const baseMode: PreviewContentMode =
@@ -1882,23 +2103,21 @@ export const initDrawer = () => {
     if (state.status === "formatting") {
       formattingJobId = state.jobId;
       formattingState = "formatting";
-      formattingBaseDoc = base;
-      formattingBaseMode = baseMode;
+      enhancedBaseMode = baseMode;
       setFormattingStatus(getTranslationProgressMessage(state));
       syncControlState();
       return;
     }
 
     if (state.status === "success" && state.operations) {
-      formattingBaseMode = baseMode;
-      await applyFormattedOperations(base, state.operations, {
+      await setFormatOps(base, baseMode, state.operations, {
         statusMessage: "已恢复后台排版结果"
       });
       return;
     }
 
     formattingJobId = "";
-    formattingState = formattedDoc ? "success" : "error";
+    formattingState = formatOps ? "success" : "error";
     setFormattingStatus("");
     syncControlState();
     if (state.message) {
@@ -1921,7 +2140,7 @@ export const initDrawer = () => {
     }
 
     if (message.type === "formatting/result") {
-      const base = formattingBaseDoc ?? currentBaseDoc();
+      const base = enhancedBaseDoc() ?? currentBaseDoc();
       if (!base) {
         formattingJobId = "";
         formattingState = "idle";
@@ -1929,13 +2148,15 @@ export const initDrawer = () => {
         syncControlState();
         return;
       }
-      void applyFormattedOperations(base, message.operations, { statusMessage: "智能排版完成" });
+      const baseMode: PreviewContentMode =
+        enhancedBaseMode === "translated" && translatedDoc ? "translated" : "original";
+      void setFormatOps(base, baseMode, message.operations, { statusMessage: "智能排版完成" });
       return;
     }
 
     if (message.message === "智能排版已取消") {
       formattingJobId = "";
-      formattingState = formattedDoc ? "success" : "idle";
+      formattingState = formatOps ? "success" : "idle";
       setFormattingStatus("");
       syncControlState();
       setStatusMessage("智能排版已取消", "info");
@@ -1943,7 +2164,7 @@ export const initDrawer = () => {
     }
 
     formattingJobId = "";
-    formattingState = formattedDoc ? "success" : "error";
+    formattingState = formatOps ? "success" : "error";
     setFormattingStatus("");
     syncControlState();
     setStatusMessage(message.message, "error");
@@ -1964,7 +2185,7 @@ export const initDrawer = () => {
       }
       if (formattingState === "formatting") {
         formattingJobId = "";
-        formattingState = formattedDoc ? "success" : "error";
+        formattingState = formatOps ? "success" : "error";
         setFormattingStatus("");
         syncControlState();
         setStatusMessage("智能排版连接已断开，请重试", "error");
@@ -2014,8 +2235,7 @@ export const initDrawer = () => {
 
     const port = ensureFormattingPort();
     formattingState = "formatting";
-    formattingBaseMode = baseMode;
-    formattingBaseDoc = base;
+    enhancedBaseMode = baseMode;
     formattingJobId =
       typeof crypto.randomUUID === "function"
         ? `formatting_${crypto.randomUUID()}`
@@ -2030,6 +2250,289 @@ export const initDrawer = () => {
         sourceHash: hashDoc(base),
         doc: base,
         settings: buildEffectiveFormattingSettings()
+      }
+    });
+  };
+
+  // === 智能配图编排（镜像排版流程；base = 排版后的 doc，配图叠加其上） ===
+
+  const buildEffectiveIllustrationSettings = (): IllustrationSettings => ({
+    ...illustrationSettings,
+    apiKey: translationSettings.apiKey,
+    model: illustrationSettings.model
+  });
+
+  // 配图所基于的 doc：当前 base 应用排版后的结果（afterBlockId 与渲染一致）
+  const formattedBaseDoc = (base: Doc): Doc =>
+    formatOps ? applyFormattingOperationsToDoc(base, formatOps) : base;
+
+  const getIllustrationCacheKey = (formattedBase: Doc): string =>
+    `${ILLUSTRATION_CACHE_PREFIX}:${hashDoc(formattedBase)}:${hashIllustration(
+      buildEffectiveIllustrationSettings()
+    )}`;
+
+  const readIllustrationCache = async (
+    formattedBase: Doc
+  ): Promise<IllustrationCacheEntry | null> => {
+    if (!chrome.storage.session) return null;
+    const key = getIllustrationCacheKey(formattedBase);
+    const stored = await chrome.storage.session.get(key);
+    return (stored[key] as IllustrationCacheEntry | undefined) ?? null;
+  };
+
+  // 配图含 base64，体积大；session 可能触配额 → try/catch 吞错降级为不缓存
+  const persistIllustrationCache = async (formattedBase: Doc, items: IllustrationItem[]) => {
+    if (!chrome.storage.session) return;
+    const key = getIllustrationCacheKey(formattedBase);
+    try {
+      await chrome.storage.session.set({
+        [key]: { items, createdAt: Date.now() } satisfies IllustrationCacheEntry
+      });
+    } catch (error) {
+      // 配额超限：不缓存，不影响主流程
+      console.warn("配图缓存写入失败（可能超出 session 配额）：", error);
+    }
+  };
+
+  const setIllustrationItems = async (
+    base: Doc,
+    baseMode: PreviewContentMode,
+    items: IllustrationItem[],
+    options?: { statusMessage?: string; persist?: boolean }
+  ) => {
+    illustrations = items;
+    enhancedBaseMode = baseMode;
+    illustrationState = "success";
+    illustrationJobId = "";
+    showEnhanced = true;
+    setIllustrationStatus("");
+    rebuildRenderedContent();
+    syncControlState();
+    if (options?.statusMessage) {
+      setStatusMessage(options.statusMessage, "success");
+    }
+    if (options?.persist ?? true) {
+      await persistIllustrationCache(formattedBaseDoc(base), items);
+    }
+  };
+
+  const maybeRestoreCachedIllustration = async (
+    base: Doc,
+    baseMode: PreviewContentMode
+  ): Promise<boolean> => {
+    const cached = await readIllustrationCache(formattedBaseDoc(base));
+    if (!cached?.items || cached.items.length === 0) return false;
+    await setIllustrationItems(base, baseMode, cached.items, {
+      statusMessage: "已加载缓存配图",
+      persist: false
+    });
+    return true;
+  };
+
+  const cancelActiveIllustration = (showMessage = true) => {
+    if (illustrationState !== "illustrating" || !illustrationJobId) return;
+    const port = illustrationPort ?? ensureIllustrationPort();
+    port.postMessage({ type: "illustration/cancel", jobId: illustrationJobId });
+    illustrationJobId = "";
+    illustrationState = illustrations ? "success" : "idle";
+    setIllustrationStatus("");
+    syncControlState();
+    if (showMessage) {
+      setStatusMessage("智能配图已取消", "info");
+    }
+  };
+
+  const getIllustrationProgressMessage = (message: {
+    label?: string;
+    detail?: string;
+    completed?: number;
+    total?: number;
+  }): string => {
+    const label = message.label ?? "智能配图";
+    if (message.total && message.total > 0 && typeof message.completed === "number") {
+      return `${label}（${message.completed}/${message.total}）`;
+    }
+    return message.detail ? `${label}：${message.detail}` : label;
+  };
+
+  const handleBackgroundIllustrationState = async (
+    state: IllustrationBackgroundState | null
+  ) => {
+    if (!state) return;
+    const base = currentBaseDoc();
+    if (!base) return;
+    const formattedBase = formattedBaseDoc(base);
+    if (hashDoc(formattedBase) !== state.sourceHash) return;
+
+    const baseMode: PreviewContentMode =
+      contentMode === "translated" && translatedDoc ? "translated" : "original";
+
+    if (state.status === "illustrating") {
+      illustrationJobId = state.jobId;
+      illustrationState = "illustrating";
+      enhancedBaseMode = baseMode;
+      setIllustrationStatus(getIllustrationProgressMessage(state));
+      syncControlState();
+      return;
+    }
+
+    if (state.status === "success" && state.items) {
+      await setIllustrationItems(base, baseMode, state.items, {
+        statusMessage: "已恢复后台配图结果"
+      });
+      return;
+    }
+
+    illustrationJobId = "";
+    illustrationState = illustrations ? "success" : "error";
+    setIllustrationStatus("");
+    syncControlState();
+    if (state.message) {
+      setStatusMessage(state.message, "error");
+    }
+  };
+
+  const handleIllustrationMessage = (message: IllustrationPortServerMessage) => {
+    if (message.type === "illustration/state") {
+      void handleBackgroundIllustrationState(message.state);
+      return;
+    }
+
+    if (!illustrationJobId || message.jobId !== illustrationJobId) return;
+
+    if (message.type === "illustration/progress") {
+      setIllustrationStatus(getIllustrationProgressMessage(message));
+      syncControlState();
+      return;
+    }
+
+    if (message.type === "illustration/result") {
+      const base = enhancedBaseDoc() ?? currentBaseDoc();
+      if (!base) {
+        illustrationJobId = "";
+        illustrationState = "idle";
+        setIllustrationStatus("");
+        syncControlState();
+        return;
+      }
+      if (message.items.length === 0) {
+        illustrationJobId = "";
+        illustrationState = illustrations ? "success" : "idle";
+        setIllustrationStatus("");
+        syncControlState();
+        setStatusMessage("未生成任何配图", "info");
+        return;
+      }
+      const baseMode: PreviewContentMode =
+        enhancedBaseMode === "translated" && translatedDoc ? "translated" : "original";
+      const requested = message.requested ?? message.items.length;
+      const statusMessage =
+        requested > message.items.length
+          ? `智能配图完成：成功 ${message.items.length}/${requested} 张（部分生成失败）`
+          : `智能配图完成：${message.items.length} 张`;
+      void setIllustrationItems(base, baseMode, message.items, { statusMessage });
+      return;
+    }
+
+    if (message.message === "智能配图已取消") {
+      illustrationJobId = "";
+      illustrationState = illustrations ? "success" : "idle";
+      setIllustrationStatus("");
+      syncControlState();
+      setStatusMessage("智能配图已取消", "info");
+      return;
+    }
+
+    illustrationJobId = "";
+    illustrationState = illustrations ? "success" : "error";
+    setIllustrationStatus("");
+    syncControlState();
+    setStatusMessage(message.message, "error");
+  };
+
+  const ensureIllustrationPort = () => {
+    if (illustrationPort) return illustrationPort;
+
+    illustrationPort = chrome.runtime.connect({ name: ILLUSTRATION_PORT_NAME });
+    illustrationPort.onMessage.addListener((message) => {
+      handleIllustrationMessage(message as IllustrationPortServerMessage);
+    });
+    illustrationPort.onDisconnect.addListener(() => {
+      illustrationPort = null;
+      if (suppressNextIllustrationDisconnect) {
+        suppressNextIllustrationDisconnect = false;
+        return;
+      }
+      if (illustrationState === "illustrating") {
+        illustrationJobId = "";
+        illustrationState = illustrations ? "success" : "error";
+        setIllustrationStatus("");
+        syncControlState();
+        setStatusMessage("智能配图连接已断开，请重试", "error");
+      }
+    });
+
+    return illustrationPort;
+  };
+
+  const syncIllustrationStateFromBackground = () => {
+    if (!sourceDoc || !sourceHash) return;
+    ensureIllustrationPort().postMessage({ type: "illustration/query-state" });
+  };
+
+  const startIllustration = async () => {
+    if (illustrationState === "illustrating") {
+      cancelActiveIllustration(true);
+      return;
+    }
+
+    await loadSettings();
+    await loadIllustrationSettings();
+    if (!sourceDoc) {
+      await refreshSource({ announce: false, activateCachedTranslation: false });
+    }
+
+    const base = currentBaseDoc();
+    if (!base) {
+      setStatusMessage("未检测到可配图内容", "error");
+      return;
+    }
+
+    if (!translationSettings.apiKey || !illustrationSettings.model) {
+      setStatusMessage("请先在设置中补全 API Key 和模型", "error");
+      await openSettings();
+      return;
+    }
+
+    const baseMode: PreviewContentMode =
+      contentMode === "translated" && translatedDoc ? "translated" : "original";
+
+    // 配图相对"排版后的 doc"，与渲染时一致
+    const formattedBase = formattedBaseDoc(base);
+
+    const restored = await maybeRestoreCachedIllustration(base, baseMode);
+    if (restored) {
+      syncControlState();
+      return;
+    }
+
+    const port = ensureIllustrationPort();
+    illustrationState = "illustrating";
+    enhancedBaseMode = baseMode;
+    illustrationJobId =
+      typeof crypto.randomUUID === "function"
+        ? `illustration_${crypto.randomUUID()}`
+        : `illustration_${Date.now()}`;
+    setIllustrationStatus("步骤 1/3：分析配图位置");
+    syncControlState();
+
+    port.postMessage({
+      type: "illustration/start",
+      payload: {
+        jobId: illustrationJobId,
+        sourceHash: hashDoc(formattedBase),
+        doc: formattedBase,
+        settings: buildEffectiveIllustrationSettings()
       }
     });
   };
@@ -2353,19 +2856,28 @@ export const initDrawer = () => {
         aggressiveness: settingsInputs.aggressivenessSelect.value as FormattingAggressiveness,
         extraInstructions: settingsInputs.formattingExtraInstructionsInput.value
       });
+      const nextIllustrationSettings = normalizeIllustrationSettings({
+        ...illustrationSettings,
+        maxImages: Number(settingsInputs.maxImagesSelect.value),
+        stylePrompt: settingsInputs.illustrationStylePromptInput.value
+      });
       await chrome.storage.local.set({
         [TRANSLATION_SETTINGS_KEY]: nextSettings,
-        [FORMATTING_SETTINGS_KEY]: nextFormattingSettings
+        [FORMATTING_SETTINGS_KEY]: nextFormattingSettings,
+        [ILLUSTRATION_SETTINGS_KEY]: nextIllustrationSettings
       });
       translationSettings = nextSettings;
       formattingSettings = nextFormattingSettings;
+      illustrationSettings = nextIllustrationSettings;
       syncSettingsForm();
       closeSettings();
 
-      // 设置变更后已生成的智能排版可能不再匹配新配置：清空并刷新（重排版可命中缓存秒恢复）
+      // 设置变更后已生成的增强稿（排版/配图）可能不再匹配新配置：清空并刷新（重排版/配图可命中缓存秒恢复）
       cancelActiveFormatting(false);
-      clearFormattedContent();
+      cancelActiveIllustration(false);
+      clearEnhancedContent();
       formattingState = "idle";
+      illustrationState = "idle";
       rebuildRenderedContent();
       syncControlState();
 
@@ -2425,11 +2937,13 @@ export const initDrawer = () => {
       cancelActiveTranslation(false);
       clearTranslatedContent();
       cancelActiveFormatting(false);
-      clearFormattedContent();
+      cancelActiveIllustration(false);
+      clearEnhancedContent();
       cancelImagePreload();
       imageMap = new Map();
       translationState = !pageChanged && hadTranslatedContent ? "stale" : "idle";
       formattingState = "idle";
+      illustrationState = "idle";
       contentMode = "original";
     }
 
@@ -2496,6 +3010,9 @@ export const initDrawer = () => {
     suppressNextFormattingDisconnect = Boolean(formattingPort);
     formattingPort?.disconnect();
     formattingPort = null;
+    suppressNextIllustrationDisconnect = Boolean(illustrationPort);
+    illustrationPort?.disconnect();
+    illustrationPort = null;
     cancelImagePreload();
     imageMap = new Map();
     drawerRefs?.themeMenu.remove();
@@ -2629,15 +3146,19 @@ export const initDrawer = () => {
       void startFormatting();
     });
 
+    drawerRefs.illustrateButton.addEventListener("click", () => {
+      void startIllustration();
+    });
+
     drawerRefs.originalFormatButton.addEventListener("click", () => {
-      showFormatted = false;
+      showEnhanced = false;
       renderPreview();
       syncControlState();
     });
 
     drawerRefs.formattedFormatButton.addEventListener("click", () => {
-      if (!formattedDoc) return;
-      showFormatted = true;
+      if (!enhancedDoc) return;
+      showEnhanced = true;
       renderPreview();
       syncControlState();
     });
@@ -2730,8 +3251,8 @@ export const initDrawer = () => {
 
       try {
         await writeClipboard(html, text);
-        const msg = isFormattedActive()
-          ? "已复制智能排版稿为公众号格式"
+        const msg = isEnhancedActive()
+          ? "已复制增强稿为公众号格式"
           : contentMode === "translated"
             ? "已复制译文为公众号格式"
             : "已复制原文为公众号格式";
@@ -2751,8 +3272,8 @@ export const initDrawer = () => {
 
       try {
         await navigator.clipboard.writeText(markdown);
-        const msg = isFormattedActive()
-          ? "已复制智能排版稿为 Markdown"
+        const msg = isEnhancedActive()
+          ? "已复制增强稿为 Markdown"
           : contentMode === "translated"
             ? "已复制译文为 Markdown"
             : "已复制原文为 Markdown";
@@ -2828,6 +3349,7 @@ export const initDrawer = () => {
       await refreshSource({ announce: false, activateCachedTranslation: false });
       syncTranslationStateFromBackground();
       syncFormattingStateFromBackground();
+      syncIllustrationStateFromBackground();
       syncControlState();
     })();
   };

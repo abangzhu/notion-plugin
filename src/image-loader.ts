@@ -10,7 +10,8 @@ export type ImageLoadResult = {
 
 const collectImageUrlsFromBlocks = (blocks: Block[], urls: Set<string>): void => {
   for (const block of blocks) {
-    if (block.type === "image" && block.src) {
+    // data: URI（如 AI 生成的配图）已是内联数据，无需再预加载
+    if (block.type === "image" && block.src && !block.src.startsWith("data:")) {
       urls.add(block.src);
     }
     if (block.type === "list") {
