@@ -225,7 +225,12 @@ const runIllustrationJob = async (tabId: number, request: IllustrationJobRequest
 
     await publishProgress({ step: "plan", label: "步骤 2/3：规划配图" });
 
-    const plan = await planIllustrations({ inputs, settings, signal: controller.signal });
+    const plan = await planIllustrations({
+      title: doc.title ?? "",
+      inputs,
+      settings,
+      signal: controller.signal
+    });
     if (!isCurrentJob(tabId, request.jobId)) return;
 
     if (plan.length === 0) {

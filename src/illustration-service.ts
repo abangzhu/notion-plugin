@@ -111,11 +111,13 @@ const cropTo16x9 = async (dataUri: string): Promise<string> => {
 };
 
 export const planIllustrations = async (params: {
+  title: string;
   inputs: FormattingBlockSummary[];
   settings: IllustrationSettings;
   signal: AbortSignal;
 }): Promise<IllustrationPlanItem[]> => {
   const input = renderPromptTemplate(illustrationPromptTemplate, {
+    ARTICLE_TITLE: params.title.trim() || "（无标题）",
     MAX_IMAGES: String(params.settings.maxImages),
     BLOCKS_JSON: JSON.stringify({ blocks: params.inputs }, null, 2)
   });
