@@ -63,6 +63,12 @@ const isRetryableError = (error: unknown): boolean => {
   return RETRYABLE_ERROR_PATTERNS.some((pattern) => normalizedMessage.includes(pattern));
 };
 
+// 新模型（如 gpt-5.5）的 responses API 不接受自定义 temperature，仅允许默认值。
+const isTemperatureUnsupportedError = (error: unknown): boolean => {
+  const message = getErrorMessage(error).toLowerCase();
+  return message.includes("temperature") && message.includes("unsupported");
+};
+
 type TranslationErrorCategory =
   | "auth"
   | "rate_limit"
@@ -169,6 +175,7 @@ export const callResponsesApi = async <T>(params: {
   signal: AbortSignal;
 }): Promise<T> => {
   const client = createOpenAIClient(params.settings);
+  let omitTemperature = false;
 
   for (let attempt = 1; attempt <= OPENAI_REQUEST_MAX_ATTEMPTS; attempt += 1) {
     let timedOut = false;
@@ -193,7 +200,7 @@ export const callResponsesApi = async <T>(params: {
         {
           model: params.settings.model,
           input: params.input,
-          temperature: 0.2
+          ...(omitTemperature ? {} : { temperature: 0.2 })
         },
         {
           signal: requestController.signal
@@ -209,6 +216,13 @@ export const callResponsesApi = async <T>(params: {
     } catch (error) {
       if (params.signal.aborted) {
         throw error;
+      }
+
+      // 模型拒绝自定义 temperature：去掉该参数后立即重试（不消耗常规重试预算）
+      if (!omitTemperature && isTemperatureUnsupportedError(error)) {
+        omitTemperature = true;
+        attempt -= 1;
+        continue;
       }
 
       const shouldRetry =

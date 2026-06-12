@@ -8,6 +8,7 @@ import {
   type TranslationPortServerMessage
 } from "./translation";
 import { setupFormattingBackground } from "./background-formatting";
+import { setupIllustrationBackground } from "./background-illustration";
 
 
 const CONTENT_SCRIPT_FILE = "dist/content.js";
@@ -30,6 +31,8 @@ const translationSubscribers = new Map<number, Set<chrome.runtime.Port>>();
 
 // 注册智能排版 job 的端口与清理监听器（独立于翻译 job，互不干扰）
 setupFormattingBackground();
+// 注册智能配图 job 的端口与清理监听器
+setupIllustrationBackground();
 
 const getTranslationJobStorageKey = (tabId: number) => `${TRANSLATION_JOB_STATE_PREFIX}:${tabId}`;
 
