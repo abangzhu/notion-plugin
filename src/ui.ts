@@ -17,7 +17,6 @@ import {
   TRANSLATION_SETTINGS_KEY
 } from "./translation";
 import {
-  applyFormattingOperationsToDoc,
   DEFAULT_FORMATTING_SETTINGS,
   FORMATTING_PORT_NAME,
   FORMATTING_SETTINGS_KEY,
@@ -25,7 +24,7 @@ import {
   normalizeFormattingSettings
 } from "./formatting";
 import {
-  applyIllustrationsToDoc,
+  applyEnhancementsToDoc,
   DEFAULT_ILLUSTRATION_SETTINGS,
   hashIllustration,
   ILLUSTRATION_PORT_NAME,
@@ -1575,13 +1574,12 @@ export const initDrawer = () => {
   const enhancedBaseDoc = (): Doc | null =>
     enhancedBaseMode === "translated" && translatedDoc ? translatedDoc : sourceDoc;
 
-  // 增强稿派生：先应用排版指令，再插入配图
+  // 增强稿派生：排版 + 配图均锚定 base 索引，组合应用（顺序无关，配图不因重排而错位/消失）
   const computeEnhancedDoc = (): Doc | null => {
     const base = enhancedBaseDoc();
     if (!base) return null;
     if (!formatOps && !illustrations) return null;
-    const formatted = formatOps ? applyFormattingOperationsToDoc(base, formatOps) : base;
-    return illustrations ? applyIllustrationsToDoc(formatted, illustrations) : formatted;
+    return applyEnhancementsToDoc(base, formatOps ?? [], illustrations ?? []);
   };
 
   const renderPreview = () => {
@@ -2046,11 +2044,8 @@ export const initDrawer = () => {
     operations: FormattingOperation[],
     options?: { statusMessage?: string; persist?: boolean }
   ) => {
-    const opsChanged = JSON.stringify(formatOps) !== JSON.stringify(operations);
+    // 配图锚定 base 索引，重排版后由 anchorOf 映射重新定位，无需清空（顺序无关）
     formatOps = operations;
-    if (opsChanged) {
-      illustrations = null;
-    }
     enhancedBaseMode = baseMode;
     formattingState = "success";
     formattingJobId = "";
@@ -2254,7 +2249,7 @@ export const initDrawer = () => {
     });
   };
 
-  // === 智能配图编排（镜像排版流程；base = 排版后的 doc，配图叠加其上） ===
+  // === 智能配图编排（配图锚定 base 块索引，与排版可叠加且顺序无关） ===
 
   const buildEffectiveIllustrationSettings = (): IllustrationSettings => ({
     ...illustrationSettings,
@@ -2262,28 +2257,23 @@ export const initDrawer = () => {
     model: illustrationSettings.model
   });
 
-  // 配图所基于的 doc：当前 base 应用排版后的结果（afterBlockId 与渲染一致）
-  const formattedBaseDoc = (base: Doc): Doc =>
-    formatOps ? applyFormattingOperationsToDoc(base, formatOps) : base;
-
-  const getIllustrationCacheKey = (formattedBase: Doc): string =>
-    `${ILLUSTRATION_CACHE_PREFIX}:${hashDoc(formattedBase)}:${hashIllustration(
+  // 配图锚定 base（原文/译文）块索引，缓存键与排版无关 → 重排版不失效
+  const getIllustrationCacheKey = (base: Doc): string =>
+    `${ILLUSTRATION_CACHE_PREFIX}:${hashDoc(base)}:${hashIllustration(
       buildEffectiveIllustrationSettings()
     )}`;
 
-  const readIllustrationCache = async (
-    formattedBase: Doc
-  ): Promise<IllustrationCacheEntry | null> => {
+  const readIllustrationCache = async (base: Doc): Promise<IllustrationCacheEntry | null> => {
     if (!chrome.storage.session) return null;
-    const key = getIllustrationCacheKey(formattedBase);
+    const key = getIllustrationCacheKey(base);
     const stored = await chrome.storage.session.get(key);
     return (stored[key] as IllustrationCacheEntry | undefined) ?? null;
   };
 
   // 配图含 base64，体积大；session 可能触配额 → try/catch 吞错降级为不缓存
-  const persistIllustrationCache = async (formattedBase: Doc, items: IllustrationItem[]) => {
+  const persistIllustrationCache = async (base: Doc, items: IllustrationItem[]) => {
     if (!chrome.storage.session) return;
-    const key = getIllustrationCacheKey(formattedBase);
+    const key = getIllustrationCacheKey(base);
     try {
       await chrome.storage.session.set({
         [key]: { items, createdAt: Date.now() } satisfies IllustrationCacheEntry
@@ -2312,7 +2302,7 @@ export const initDrawer = () => {
       setStatusMessage(options.statusMessage, "success");
     }
     if (options?.persist ?? true) {
-      await persistIllustrationCache(formattedBaseDoc(base), items);
+      await persistIllustrationCache(base, items);
     }
   };
 
@@ -2320,7 +2310,7 @@ export const initDrawer = () => {
     base: Doc,
     baseMode: PreviewContentMode
   ): Promise<boolean> => {
-    const cached = await readIllustrationCache(formattedBaseDoc(base));
+    const cached = await readIllustrationCache(base);
     if (!cached?.items || cached.items.length === 0) return false;
     await setIllustrationItems(base, baseMode, cached.items, {
       statusMessage: "已加载缓存配图",
@@ -2361,8 +2351,7 @@ export const initDrawer = () => {
     if (!state) return;
     const base = currentBaseDoc();
     if (!base) return;
-    const formattedBase = formattedBaseDoc(base);
-    if (hashDoc(formattedBase) !== state.sourceHash) return;
+    if (hashDoc(base) !== state.sourceHash) return;
 
     const baseMode: PreviewContentMode =
       contentMode === "translated" && translatedDoc ? "translated" : "original";
@@ -2507,9 +2496,6 @@ export const initDrawer = () => {
     const baseMode: PreviewContentMode =
       contentMode === "translated" && translatedDoc ? "translated" : "original";
 
-    // 配图相对"排版后的 doc"，与渲染时一致
-    const formattedBase = formattedBaseDoc(base);
-
     const restored = await maybeRestoreCachedIllustration(base, baseMode);
     if (restored) {
       syncControlState();
@@ -2526,12 +2512,13 @@ export const initDrawer = () => {
     setIllustrationStatus("步骤 1/3：分析配图位置");
     syncControlState();
 
+    // 配图锚定 base 块索引（与排版可叠加，顺序无关）；规划基于 base
     port.postMessage({
       type: "illustration/start",
       payload: {
         jobId: illustrationJobId,
-        sourceHash: hashDoc(formattedBase),
-        doc: formattedBase,
+        sourceHash: hashDoc(base),
+        doc: base,
         settings: buildEffectiveIllustrationSettings()
       }
     });
