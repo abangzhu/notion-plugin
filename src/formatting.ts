@@ -279,6 +279,50 @@ export const applyFormattingOperationsToDoc = (doc: Doc, operations: FormattingO
   return { ...clone, blocks: out };
 };
 
+const SPECIAL_CONVERT_TYPES = new Set<string>(["quote-card", "callout", "emphasis"]);
+
+const parseBlockIndex = (blockId: string): number => {
+  const m = /^blk_(\d+)$/.exec(blockId);
+  return m ? Number(m[1]) : -1;
+};
+
+// 后处理：过滤 AI 输出的排版指令，防止连续引用和样式密度过高。
+// 不改文字，只减少 convert 操作数量。insert-divider 和 group-steps 保持不变。
+export const normalizeFormattingOperations = (ops: FormattingOperation[]): FormattingOperation[] => {
+  const converts = ops
+    .filter((o): o is ConvertOperation => o.op === "convert")
+    .map((op) => ({ index: parseBlockIndex(op.blockId), op }))
+    .filter(({ index }) => index >= 0)
+    .sort((a, b) => a.index - b.index);
+
+  const removed = new Set<string>();
+
+  // 规则 1：连续 quote-card（相邻索引差 ≤ 1）只保留每 run 的第一个
+  let lastQuoteCardIndex = -99;
+  converts.forEach(({ index, op }) => {
+    if (op.to === "quote-card") {
+      if (index - lastQuoteCardIndex <= 1) {
+        removed.add(op.blockId);
+      } else {
+        lastQuoteCardIndex = index;
+      }
+    }
+  });
+
+  // 规则 2：任意 4 块窗口内 special（quote-card/callout/emphasis）数 ≤ 2
+  const specials = converts.filter(({ op }) => SPECIAL_CONVERT_TYPES.has(op.to) && !removed.has(op.blockId));
+  specials.forEach(({ index }) => {
+    const inWindow = specials.filter(
+      ({ index: i, op }) => i >= index && i <= index + 3 && !removed.has(op.blockId)
+    );
+    if (inWindow.length > 2) {
+      inWindow.slice(2).forEach(({ op }) => removed.add(op.blockId));
+    }
+  });
+
+  return ops.filter((op) => op.op !== "convert" || !removed.has(op.blockId));
+};
+
 // dev/测试护栏：校验排版前后正文 inline 文本逐字一致（顺序也一致）。
 // 过滤无文字的块（如插入的分隔符），它们不携带正文，只影响结构。
 export const collectDocText = (doc: Doc): string =>

@@ -1,5 +1,6 @@
 import formattingPromptTemplate from "./prompts/formatting-plan.md";
 import { callResponsesApi, getErrorMessage, renderPromptTemplate } from "./translation-service";
+import { normalizeFormattingOperations } from "./formatting";
 import type { FormattingBlockSummary, FormattingOperation, FormattingSettings } from "./formatting";
 
 // 分块：以块数为主、字符数为辅。chunk 边界对齐——不在连续 paragraph 段中间切断，
@@ -73,5 +74,5 @@ export const planFormatting = async (params: {
     operations.push(...(payload.operations ?? []));
   }
 
-  return operations;
+  return normalizeFormattingOperations(operations);
 };
