@@ -1,5 +1,5 @@
 import { applyFormattingWithAnchors, type FormattingOperation } from "./formatting";
-import { DEFAULT_TRANSLATION_MODEL } from "./translation-config";
+import { DEFAULT_IMAGE_MODEL } from "./translation-config";
 import type { Block, Doc, ImageBlock } from "./types";
 
 export const ILLUSTRATION_SETTINGS_KEY = "illustrationSettings";
@@ -80,7 +80,7 @@ export type IllustrationPortServerMessage =
 export const DEFAULT_ILLUSTRATION_SETTINGS: IllustrationSettings = {
   apiKey: "",
   baseURL: "",
-  model: DEFAULT_TRANSLATION_MODEL,
+  model: DEFAULT_IMAGE_MODEL,
   maxImages: 4,
   stylePrompt: ""
 };
@@ -97,8 +97,8 @@ export const normalizeIllustrationSettings = (
     apiKey: String(merged.apiKey ?? "").trim(),
     baseURL: String(merged.baseURL ?? "").trim(),
     model:
-      String(merged.model ?? DEFAULT_ILLUSTRATION_SETTINGS.model).trim() ||
-      DEFAULT_ILLUSTRATION_SETTINGS.model,
+      String(merged.model ?? DEFAULT_IMAGE_MODEL).trim() ||
+      DEFAULT_IMAGE_MODEL,
     maxImages,
     stylePrompt: String(merged.stylePrompt ?? "").trim()
   };

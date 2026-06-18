@@ -2,6 +2,7 @@ import { writeClipboard } from "./clipboard";
 import { extractDoc, getPageKey } from "./platform";
 import { renderDocToHtml, renderDocToMarkdown, renderDocToText } from "./renderer";
 import {
+  IMAGE_MODELS,
   STYLE_PRESET_OPTIONS,
   TARGET_AUDIENCE_OPTIONS,
   TARGET_LANGUAGE_OPTIONS,
@@ -1111,16 +1112,59 @@ const createDrawer = () => {
   apiKeyControl.appendChild(apiKeyInput);
   apiKeyControl.appendChild(apiKeyToggleButton);
 
+  // 给 input 包一层 relative 容器并附加右侧复制按钮
+  const makeInputControl = (input: HTMLInputElement): { control: HTMLDivElement; copyButton: HTMLButtonElement } => {
+    const control = document.createElement("div");
+    control.style.position = "relative";
+    control.style.display = "flex";
+    control.style.alignItems = "center";
+    control.style.width = "100%";
+    const copyButton = createIconButton();
+    copyButton.innerHTML = COPY_ICON;
+    copyButton.title = "复制";
+    copyButton.setAttribute("aria-label", "复制");
+    copyButton.style.position = "absolute";
+    copyButton.style.top = "50%";
+    copyButton.style.right = "8px";
+    copyButton.style.transform = "translateY(-50%)";
+    copyButton.addEventListener("click", async () => {
+      const text = input.value.trim();
+      if (!text) return;
+      await navigator.clipboard.writeText(text).catch(() => {});
+      copyButton.innerHTML = CHECK_ICON;
+      globalThis.setTimeout(() => { copyButton.innerHTML = COPY_ICON; }, 1500);
+    });
+    input.style.paddingRight = "42px";
+    control.appendChild(input);
+    control.appendChild(copyButton);
+    return { control, copyButton };
+  };
+
   const baseURLInput = createTextInput("url");
   baseURLInput.placeholder = "留空使用 OpenAI 官方接口（如 https://your-gateway.com/v1）";
   styleControl(baseURLInput);
+  const { control: baseURLControl, copyButton: baseURLCopyButton } = makeInputControl(baseURLInput);
 
   styleControl(modelInput);
+  const { control: modelControl, copyButton: modelCopyButton } = makeInputControl(modelInput);
+
+  const imageModelDatalist = document.createElement("datalist");
+  imageModelDatalist.id = "n2w-image-model-list";
+  IMAGE_MODELS.forEach((m) => {
+    const opt = document.createElement("option");
+    opt.value = m.id;
+    imageModelDatalist.appendChild(opt);
+  });
+  const imageModelInput = createTextInput("text");
+  imageModelInput.setAttribute("list", "n2w-image-model-list");
+  imageModelInput.placeholder = "gpt-image-2";
+  styleControl(imageModelInput);
+  const { control: imageModelControl, copyButton: imageModelCopyButton } = makeInputControl(imageModelInput);
 
   const basicFields = [
     createField("API Key", apiKeyControl, "", false),
-    createField("API 地址", baseURLInput, "LiteLLM Gateway 或 OpenAI 兼容网关地址，留空使用官方接口"),
-    createField("模型", modelInput, "支持 OpenAI 和 Claude 系列，可自由输入模型 ID"),
+    createField("API 地址", baseURLControl, "LiteLLM Gateway 或 OpenAI 兼容网关地址，留空使用官方接口"),
+    createField("语言模型", modelControl, "翻译和排版使用；支持 OpenAI / Claude 系列"),
     createField("目标语言", targetLanguageSegment, "", false),
     createField("翻译模式", modeSelect)
   ];
@@ -1140,6 +1184,7 @@ const createDrawer = () => {
     createField("额外说明", formattingExtraInstructionsInput, "对智能排版的额外要求（不会改动正文文字）")
   ];
   const illustrationFields = [
+    createField("图片模型", imageModelControl, "生图使用；留空回退到语言模型"),
     createField("配图数量上限", maxImagesSelect, "16:9 宽图；生图较慢，数量越多越慢"),
     createField(
       "风格提示词",
@@ -1154,11 +1199,13 @@ const createDrawer = () => {
   settingsBody.appendChild(createCollapsibleSection("智能配图", false, illustrationFields));
   settingsBody.appendChild(createCollapsibleSection("高级选项", false, advancedFields));
   settingsBody.appendChild(modelDatalist);
+  settingsBody.appendChild(imageModelDatalist);
 
   [
     apiKeyInput,
     baseURLInput,
     modelInput,
+    imageModelInput,
     modeSelect,
     audienceSelect,
     stylePresetSelect,
@@ -1173,6 +1220,7 @@ const createDrawer = () => {
     illustrationStylePromptInput
   ].forEach((control) => bindEditableControl(control));
   bindClickableControl(apiKeyToggleButton);
+  [baseURLCopyButton, modelCopyButton, imageModelCopyButton].forEach((btn) => bindClickableControl(btn));
 
   const settingsFooter = document.createElement("div");
   settingsFooter.style.display = "flex";
@@ -1268,6 +1316,7 @@ const createDrawer = () => {
       apiKeyToggleButton,
       baseURLInput,
       modelInput,
+      imageModelInput,
       targetLanguageSegment,
       targetLanguageButtons,
       modeSelect,
@@ -1770,6 +1819,7 @@ export const initDrawer = () => {
     setApiKeyToggleVisual(settingsInputs.apiKeyToggleButton, false);
     settingsInputs.baseURLInput.value = translationSettings.baseURL;
     settingsInputs.modelInput.value = translationSettings.model;
+    settingsInputs.imageModelInput.value = illustrationSettings.model;
     settingsInputs.targetLanguageSegment.dataset.value = translationSettings.targetLanguage;
     syncTargetLanguageButtons();
     settingsInputs.modeSelect.value = translationSettings.mode;
@@ -2872,7 +2922,7 @@ export const initDrawer = () => {
         ...illustrationSettings,
         apiKey: nextSettings.apiKey,
         baseURL: nextSettings.baseURL,
-        model: nextSettings.model,
+        model: settingsInputs.imageModelInput.value,
         maxImages: Number(settingsInputs.maxImagesSelect.value),
         stylePrompt: settingsInputs.illustrationStylePromptInput.value
       });
