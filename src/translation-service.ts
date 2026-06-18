@@ -64,10 +64,11 @@ const isRetryableError = (error: unknown): boolean => {
   return RETRYABLE_ERROR_PATTERNS.some((pattern) => normalizedMessage.includes(pattern));
 };
 
-// 新模型（如 gpt-5.5）的 responses API 不接受自定义 temperature，仅允许默认值。
+// 部分模型（gpt-5.5、Claude via Bedrock 等）不接受自定义 temperature。
+// 错误措辞因 provider 而异："unsupported"（OpenAI）或 "deprecated"（Bedrock/Claude）。
 const isTemperatureUnsupportedError = (error: unknown): boolean => {
   const message = getErrorMessage(error).toLowerCase();
-  return message.includes("temperature") && message.includes("unsupported");
+  return message.includes("temperature") && (message.includes("unsupported") || message.includes("deprecated"));
 };
 
 type TranslationErrorCategory =
