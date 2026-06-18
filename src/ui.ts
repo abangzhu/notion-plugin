@@ -6,7 +6,8 @@ import {
   STYLE_PRESET_OPTIONS,
   TARGET_AUDIENCE_OPTIONS,
   TARGET_LANGUAGE_OPTIONS,
-  TRANSLATION_MODELS
+  TRANSLATION_MODELS,
+  type TranslationModelConfig
 } from "./translation-config";
 import {
   applyTranslationOutputsToDoc,
@@ -1052,16 +1053,8 @@ const createDrawer = () => {
   apiKeyToggleButton.style.transform = "translateY(-50%)";
   setApiKeyToggleVisual(apiKeyToggleButton, false);
 
-  const modelDatalist = document.createElement("datalist");
-  modelDatalist.id = "n2w-model-list";
-  TRANSLATION_MODELS.forEach((m) => {
-    const opt = document.createElement("option");
-    opt.value = m.id;
-    modelDatalist.appendChild(opt);
-  });
   const modelInput = createTextInput("text");
-  modelInput.setAttribute("list", "n2w-model-list");
-  modelInput.placeholder = "gpt-5.5 或 claude-opus-4-8";
+  modelInput.placeholder = "输入模型 ID";
 
   const modeSelect = createSelect([
     { value: "quick", label: "Quick" },
@@ -1146,25 +1139,56 @@ const createDrawer = () => {
   const { control: baseURLControl, copyButton: baseURLCopyButton } = makeInputControl(baseURLInput);
 
   styleControl(modelInput);
-  const { control: modelControl, copyButton: modelCopyButton } = makeInputControl(modelInput);
 
-  const imageModelDatalist = document.createElement("datalist");
-  imageModelDatalist.id = "n2w-image-model-list";
-  IMAGE_MODELS.forEach((m) => {
-    const opt = document.createElement("option");
-    opt.value = m.id;
-    imageModelDatalist.appendChild(opt);
-  });
+  // input + 复制按钮 + 可点击建议 chips（避免原生 datalist 在扩展 content script 中被事件拦截）
+  const makeModelField = (
+    input: HTMLInputElement,
+    models: TranslationModelConfig[]
+  ): { wrapper: HTMLDivElement; copyButton: HTMLButtonElement } => {
+    const { control, copyButton } = makeInputControl(input);
+
+    const chipsRow = document.createElement("div");
+    chipsRow.style.display = "flex";
+    chipsRow.style.flexWrap = "wrap";
+    chipsRow.style.gap = "6px";
+    chipsRow.style.marginTop = "6px";
+
+    const chips = models.map((model) => {
+      const chip = createSegment(model.label, false);
+      bindClickableControl(chip);
+      chip.addEventListener("click", () => {
+        input.value = model.id;
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+        syncChips();
+      });
+      chipsRow.appendChild(chip);
+      return { model, chip };
+    });
+
+    const syncChips = () => {
+      chips.forEach(({ model, chip }) => applySegmentStyle(chip, input.value === model.id));
+    };
+
+    input.addEventListener("input", syncChips);
+    syncChips();
+
+    const wrapper = document.createElement("div");
+    wrapper.appendChild(control);
+    wrapper.appendChild(chipsRow);
+    return { wrapper, copyButton };
+  };
+
+  const { wrapper: modelWrapper, copyButton: modelCopyButton } = makeModelField(modelInput, TRANSLATION_MODELS);
+
   const imageModelInput = createTextInput("text");
-  imageModelInput.setAttribute("list", "n2w-image-model-list");
-  imageModelInput.placeholder = "gpt-image-2";
+  imageModelInput.placeholder = "输入图片模型 ID";
   styleControl(imageModelInput);
-  const { control: imageModelControl, copyButton: imageModelCopyButton } = makeInputControl(imageModelInput);
+  const { wrapper: imageModelWrapper, copyButton: imageModelCopyButton } = makeModelField(imageModelInput, IMAGE_MODELS);
 
   const basicFields = [
     createField("API Key", apiKeyControl, "", false),
     createField("API 地址", baseURLControl, "LiteLLM Gateway 或 OpenAI 兼容网关地址，留空使用官方接口"),
-    createField("语言模型", modelControl, "翻译和排版使用；支持 OpenAI / Claude 系列"),
+    createField("语言模型", modelWrapper, "翻译和排版使用；支持 OpenAI / Claude 系列", false),
     createField("目标语言", targetLanguageSegment, "", false),
     createField("翻译模式", modeSelect)
   ];
@@ -1184,7 +1208,7 @@ const createDrawer = () => {
     createField("额外说明", formattingExtraInstructionsInput, "对智能排版的额外要求（不会改动正文文字）")
   ];
   const illustrationFields = [
-    createField("图片模型", imageModelControl, "生图使用；留空回退到语言模型"),
+    createField("图片模型", imageModelWrapper, "生图使用；留空回退到语言模型", false),
     createField("配图数量上限", maxImagesSelect, "16:9 宽图；生图较慢，数量越多越慢"),
     createField(
       "风格提示词",
@@ -1198,8 +1222,6 @@ const createDrawer = () => {
   settingsBody.appendChild(createCollapsibleSection("智能排版", false, formattingFields));
   settingsBody.appendChild(createCollapsibleSection("智能配图", false, illustrationFields));
   settingsBody.appendChild(createCollapsibleSection("高级选项", false, advancedFields));
-  settingsBody.appendChild(modelDatalist);
-  settingsBody.appendChild(imageModelDatalist);
 
   [
     apiKeyInput,
