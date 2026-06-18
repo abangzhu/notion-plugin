@@ -2947,7 +2947,8 @@ export const initDrawer = () => {
         ...illustrationSettings,
         apiKey: nextSettings.apiKey,
         baseURL: nextSettings.baseURL,
-        model: settingsInputs.imageModelInput.value,
+        planningModel: nextSettings.model,               // 语言模型：规划配图位置
+        model: settingsInputs.imageModelInput.value,     // 图片模型：生成图片
         maxImages: Number(settingsInputs.maxImagesSelect.value),
         stylePrompt: settingsInputs.illustrationStylePromptInput.value
       });

@@ -125,7 +125,12 @@ export const planIllustrations = async (params: {
   });
 
   const payload = await callResponsesApi<{ images: IllustrationPlanItem[] }>({
-    settings: params.settings,
+    // 规划阶段用语言模型（planningModel），不用图片模型
+    settings: {
+      apiKey: params.settings.apiKey,
+      baseURL: params.settings.baseURL,
+      model: params.settings.planningModel
+    },
     input,
     signal: params.signal
   });
@@ -168,19 +173,19 @@ export const generateImage = async (params: {
     );
 
     try {
-      // responses API + image_generation 工具：编排模型用 settings.model，工具产出图像
-      const response = (await client.responses.create(
+      // Images API（/v1/images/generations）：直接调用图片模型，不经 Responses API 编排
+      const imageResponse = await client.images.generate(
         {
           model: params.settings.model,
-          input,
-          tools: [{ type: "image_generation", size: IMAGE_SIZE }]
-        } as Parameters<typeof client.responses.create>[0],
+          prompt: input,
+          n: 1,
+          size: IMAGE_SIZE as "1536x1024",
+          response_format: "b64_json"
+        },
         { signal: requestController.signal }
-      )) as { output?: Array<{ type?: string; result?: string }> };
+      );
 
-      const base64 = (response.output ?? []).find(
-        (item) => item.type === "image_generation_call"
-      )?.result;
+      const base64 = imageResponse.data?.[0]?.b64_json;
       if (!base64) throw new Error("生图返回为空");
       return cropTo16x9(`data:image/png;base64,${base64}`);
     } catch (error) {
