@@ -25,7 +25,9 @@ const wait = (ms: number): Promise<void> =>
 const isTransientImageError = (message: string): boolean =>
   /\b(429|500|502|503|504)\b|timeout|timed out|network|fetch|connection|socket|reset|overload/i.test(
     message
-  );
+  ) ||
+  // 模型有概率不调用 image_generation tool（非确定性），重试通常可成功
+  /生图返回为空/.test(message);
 
 // 将原始错误归类为明确的中文提示，便于用户对症处理。
 const formatImageError = (error: unknown): string => {
@@ -179,9 +181,11 @@ export const generateImage = async (params: {
     } catch (error) {
       lastError = error;
       if (params.signal.aborted) throw error;
-      // 瞬时错误（限流/网络/超时/过载）退避重试，提升成功率
+      // 瞬时错误（限流/网络/超时/过载/空响应）退避重试，提升成功率
       if (attempt < IMAGE_MAX_ATTEMPTS && isTransientImageError(getErrorMessage(error))) {
-        await wait(800 * attempt);
+        // 空响应（模型未调用 tool）用更长间隔，给模型重新决策的机会
+        const backoffMs = /生图返回为空/.test(getErrorMessage(error)) ? 2000 * attempt : 800 * attempt;
+        await wait(backoffMs);
         continue;
       }
       throw new Error(formatImageError(error));
