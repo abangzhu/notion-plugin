@@ -138,7 +138,12 @@ export const planIllustrations = async (params: {
 };
 
 const createImageClient = (settings: IllustrationSettings) =>
-  new OpenAI({ apiKey: settings.apiKey, maxRetries: 0, dangerouslyAllowBrowser: true });
+  new OpenAI({
+    apiKey: settings.apiKey,
+    ...(settings.baseURL ? { baseURL: settings.baseURL } : {}),
+    maxRetries: 0,
+    dangerouslyAllowBrowser: true
+  });
 
 // 单张生图：responses API + image_generation tool，从 output 数组取 base64。
 export const generateImage = async (params: {

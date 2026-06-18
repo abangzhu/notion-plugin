@@ -30,6 +30,7 @@ export type FormattingOperation =
 
 export type FormattingSettings = {
   apiKey: string;
+  baseURL: string;
   model: string;
   aggressiveness: FormattingAggressiveness;
   extraInstructions: string;
@@ -78,6 +79,7 @@ export type FormattingPortServerMessage =
 
 export const DEFAULT_FORMATTING_SETTINGS: FormattingSettings = {
   apiKey: "",
+  baseURL: "",
   model: DEFAULT_TRANSLATION_MODEL,
   aggressiveness: "balanced",
   extraInstructions: "",
@@ -97,6 +99,7 @@ export const normalizeFormattingSettings = (
 
   return {
     apiKey: String(merged.apiKey ?? "").trim(),
+    baseURL: String(merged.baseURL ?? "").trim(),
     model:
       String(merged.model ?? DEFAULT_FORMATTING_SETTINGS.model).trim() ||
       DEFAULT_FORMATTING_SETTINGS.model,

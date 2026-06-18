@@ -1051,12 +1051,17 @@ const createDrawer = () => {
   apiKeyToggleButton.style.transform = "translateY(-50%)";
   setApiKeyToggleVisual(apiKeyToggleButton, false);
 
-  const modelSelect = createSelect(
-    TRANSLATION_MODELS.map((model) => ({
-      value: model.id,
-      label: model.label
-    }))
-  );
+  const modelDatalist = document.createElement("datalist");
+  modelDatalist.id = "n2w-model-list";
+  TRANSLATION_MODELS.forEach((m) => {
+    const opt = document.createElement("option");
+    opt.value = m.id;
+    modelDatalist.appendChild(opt);
+  });
+  const modelInput = createTextInput("text");
+  modelInput.setAttribute("list", "n2w-model-list");
+  modelInput.placeholder = "gpt-5.5 或 claude-opus-4-8";
+
   const modeSelect = createSelect([
     { value: "quick", label: "Quick" },
     { value: "normal", label: "Normal" }
@@ -1106,9 +1111,16 @@ const createDrawer = () => {
   apiKeyControl.appendChild(apiKeyInput);
   apiKeyControl.appendChild(apiKeyToggleButton);
 
+  const baseURLInput = createTextInput("url");
+  baseURLInput.placeholder = "留空使用 OpenAI 官方接口（如 https://your-gateway.com/v1）";
+  styleControl(baseURLInput);
+
+  styleControl(modelInput);
+
   const basicFields = [
     createField("API Key", apiKeyControl, "", false),
-    createField("模型", modelSelect, "模型列表来自 src/translation-models.json"),
+    createField("API 地址", baseURLInput, "LiteLLM Gateway 或 OpenAI 兼容网关地址，留空使用官方接口"),
+    createField("模型", modelInput, "支持 OpenAI 和 Claude 系列，可自由输入模型 ID"),
     createField("目标语言", targetLanguageSegment, "", false),
     createField("翻译模式", modeSelect)
   ];
@@ -1141,10 +1153,12 @@ const createDrawer = () => {
   settingsBody.appendChild(createCollapsibleSection("智能排版", false, formattingFields));
   settingsBody.appendChild(createCollapsibleSection("智能配图", false, illustrationFields));
   settingsBody.appendChild(createCollapsibleSection("高级选项", false, advancedFields));
+  settingsBody.appendChild(modelDatalist);
 
   [
     apiKeyInput,
-    modelSelect,
+    baseURLInput,
+    modelInput,
     modeSelect,
     audienceSelect,
     stylePresetSelect,
@@ -1252,7 +1266,8 @@ const createDrawer = () => {
     settingsInputs: {
       apiKeyInput,
       apiKeyToggleButton,
-      modelSelect,
+      baseURLInput,
+      modelInput,
       targetLanguageSegment,
       targetLanguageButtons,
       modeSelect,
@@ -1753,7 +1768,8 @@ export const initDrawer = () => {
     settingsInputs.apiKeyInput.value = translationSettings.apiKey;
     settingsInputs.apiKeyInput.type = "password";
     setApiKeyToggleVisual(settingsInputs.apiKeyToggleButton, false);
-    ensureSelectValue(settingsInputs.modelSelect, translationSettings.model, translationSettings.model);
+    settingsInputs.baseURLInput.value = translationSettings.baseURL;
+    settingsInputs.modelInput.value = translationSettings.model;
     settingsInputs.targetLanguageSegment.dataset.value = translationSettings.targetLanguage;
     syncTargetLanguageButtons();
     settingsInputs.modeSelect.value = translationSettings.mode;
@@ -2777,14 +2793,15 @@ export const initDrawer = () => {
     if (!drawerRefs) return;
     const { settingsInputs, settingsTestButton } = drawerRefs;
     const apiKey = settingsInputs.apiKeyInput.value.trim();
-    const model = settingsInputs.modelSelect.value.trim();
+    const baseURL = settingsInputs.baseURLInput.value.trim();
+    const model = settingsInputs.modelInput.value.trim();
 
     if (!apiKey) {
       setSettingsStatus("请先填写 API Key", "error");
       return;
     }
     if (!model) {
-      setSettingsStatus("请先选择模型", "error");
+      setSettingsStatus("请先填写模型 ID", "error");
       return;
     }
 
@@ -2798,7 +2815,7 @@ export const initDrawer = () => {
 
     let result: ApiTestResult;
     try {
-      result = await testApiConnection({ apiKey, model }, testConnectionController.signal);
+      result = await testApiConnection({ apiKey, baseURL, model }, testConnectionController.signal);
     } finally {
       settingsTestButton.textContent = originalLabel;
       setButtonDisabled(settingsTestButton, false);
@@ -2813,7 +2830,8 @@ export const initDrawer = () => {
     const { settingsInputs } = drawerRefs;
     const nextSettings = normalizeTranslationSettings({
       apiKey: settingsInputs.apiKeyInput.value,
-      model: settingsInputs.modelSelect.value,
+      baseURL: settingsInputs.baseURLInput.value,
+      model: settingsInputs.modelInput.value,
       targetLanguage: settingsInputs.targetLanguageSegment.dataset.value ?? "zh-CN",
       mode: settingsInputs.modeSelect.value as TranslationSettings["mode"],
       audience: settingsInputs.audienceSelect.value,
@@ -2844,11 +2862,17 @@ export const initDrawer = () => {
       }
       const nextFormattingSettings = normalizeFormattingSettings({
         ...formattingSettings,
+        apiKey: nextSettings.apiKey,
+        baseURL: nextSettings.baseURL,
+        model: nextSettings.model,
         aggressiveness: settingsInputs.aggressivenessSelect.value as FormattingAggressiveness,
         extraInstructions: settingsInputs.formattingExtraInstructionsInput.value
       });
       const nextIllustrationSettings = normalizeIllustrationSettings({
         ...illustrationSettings,
+        apiKey: nextSettings.apiKey,
+        baseURL: nextSettings.baseURL,
+        model: nextSettings.model,
         maxImages: Number(settingsInputs.maxImagesSelect.value),
         stylePrompt: settingsInputs.illustrationStylePromptInput.value
       });

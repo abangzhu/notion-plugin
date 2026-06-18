@@ -25,6 +25,7 @@ export type IllustrationItem = {
 
 export type IllustrationSettings = {
   apiKey: string;
+  baseURL: string;
   model: string;
   maxImages: number;
   // 用户自定义生图风格提示词（拼到固定极简风之后、主题描述之前）
@@ -78,6 +79,7 @@ export type IllustrationPortServerMessage =
 
 export const DEFAULT_ILLUSTRATION_SETTINGS: IllustrationSettings = {
   apiKey: "",
+  baseURL: "",
   model: DEFAULT_TRANSLATION_MODEL,
   maxImages: 4,
   stylePrompt: ""
@@ -93,6 +95,7 @@ export const normalizeIllustrationSettings = (
 
   return {
     apiKey: String(merged.apiKey ?? "").trim(),
+    baseURL: String(merged.baseURL ?? "").trim(),
     model:
       String(merged.model ?? DEFAULT_ILLUSTRATION_SETTINGS.model).trim() ||
       DEFAULT_ILLUSTRATION_SETTINGS.model,
