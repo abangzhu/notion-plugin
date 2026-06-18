@@ -34,6 +34,9 @@ Return strict JSON with a single key `operations`, an array of operation objects
 - Identify "第一步/首先/然后/接着/最后" style sequences of consecutive paragraphs → `group-steps`.
 - Promote a paragraph that clearly acts as a section title → `heading`.
 - Use dividers sparingly, only between clearly distinct major sections.
+- Never emit `quote-card` for 2 or more consecutive blocks. If multiple adjacent blocks are all memorable, pick only the single most striking one and leave the rest as paragraphs.
+- Limit the total number of special-style conversions (quote-card + callout + emphasis combined) to at most 1 per every 4 input blocks. Fewer is better — rhythm comes from restraint, not density.
+- Within any 4-block window, do not use both callout and emphasis — choose one or the other, not both.
 
 Aggressiveness level: {{AGGRESSIVENESS}}
 - conservative: only act on high-confidence cases; prefer fewer operations.

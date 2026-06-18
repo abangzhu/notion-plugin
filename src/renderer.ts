@@ -214,7 +214,7 @@ const quoteCardHtml = (
   const inner = inlinesToHtml(block.children, options, indexMap) || "<br/>";
   const baseSize = Number.parseFloat(options.typography.bodySize) || 16;
   const bg = options.style.calloutBg ?? options.colors.codeBg;
-  return `<section style="margin:24px 0;padding:22px 20px;background:${bg};border-radius:${options.style.radiusMd};text-align:center;font-family:${options.fontStack};"><span style="display:block;font-size:${Math.round(
+  return `<section style="margin:24px 0;padding:22px 20px;background:${bg};border-radius:${options.style.radiusMd};text-align:left;font-family:${options.fontStack};"><span style="display:block;font-size:${Math.round(
     baseSize * 2.4
   )}px;line-height:1;color:${options.colors.link};margin:0 0 6px;">&ldquo;</span><p style="margin:0;font-size:${Math.round(
     baseSize * 1.1
