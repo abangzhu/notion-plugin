@@ -1155,8 +1155,9 @@ const createDrawer = () => {
 
     const chips = models.map((model) => {
       const chip = createSegment(model.label, false);
-      bindClickableControl(chip);
-      chip.addEventListener("click", () => {
+      // mousedown 代替 click：bindClickableControl 内部用 pointerdown/preventDefault 会吞掉 click 事件
+      chip.addEventListener("mousedown", (e) => {
+        e.preventDefault(); // 阻止 input 失焦
         input.value = model.id;
         input.dispatchEvent(new Event("input", { bubbles: true }));
         syncChips();
@@ -1841,7 +1842,9 @@ export const initDrawer = () => {
     setApiKeyToggleVisual(settingsInputs.apiKeyToggleButton, false);
     settingsInputs.baseURLInput.value = translationSettings.baseURL;
     settingsInputs.modelInput.value = translationSettings.model;
+    settingsInputs.modelInput.dispatchEvent(new Event("input"));
     settingsInputs.imageModelInput.value = illustrationSettings.model;
+    settingsInputs.imageModelInput.dispatchEvent(new Event("input"));
     settingsInputs.targetLanguageSegment.dataset.value = translationSettings.targetLanguage;
     syncTargetLanguageButtons();
     settingsInputs.modeSelect.value = translationSettings.mode;
