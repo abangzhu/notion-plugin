@@ -1,4 +1,5 @@
 import modelConfig from "./translation-models.json";
+import imageModelConfig from "./image-models.json";
 
 export type TranslationModelConfig = {
   id: string;
@@ -31,6 +32,22 @@ export const TRANSLATION_MODELS: TranslationModelConfig[] = Array.isArray(modelC
 
 export const DEFAULT_TRANSLATION_MODEL =
   TRANSLATION_MODELS[0]?.id ?? DEFAULT_MODEL_ID;
+
+export const IMAGE_MODELS: TranslationModelConfig[] = Array.isArray(imageModelConfig)
+  ? imageModelConfig
+      .filter(
+        (item): item is TranslationModelConfig =>
+          Boolean(item) &&
+          typeof item === "object" &&
+          typeof item.id === "string" &&
+          item.id.trim().length > 0 &&
+          typeof item.label === "string" &&
+          item.label.trim().length > 0
+      )
+      .map((item) => ({ id: item.id.trim(), label: item.label.trim() }))
+  : [];
+
+export const DEFAULT_IMAGE_MODEL = IMAGE_MODELS[0]?.id ?? "gpt-image-2";
 
 export const TARGET_LANGUAGE_OPTIONS = [
   { value: "zh-CN", label: "中文" },

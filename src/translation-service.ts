@@ -35,12 +35,13 @@ const parseJsonPayload = <T>(raw: string): T => {
   return JSON.parse(candidate) as T;
 };
 
-// 通用 LLM 调用所需的最小设置：任何携带 apiKey + model 的设置对象都可复用 callResponsesApi
-export type LlmCallSettings = Pick<TranslationSettings, "apiKey" | "model">;
+// 通用 LLM 调用所需的最小设置：任何携带 apiKey + baseURL + model 的设置对象都可复用 callResponsesApi
+export type LlmCallSettings = Pick<TranslationSettings, "apiKey" | "baseURL" | "model">;
 
 const createOpenAIClient = (settings: LlmCallSettings) =>
   new OpenAI({
     apiKey: settings.apiKey,
+    ...(settings.baseURL ? { baseURL: settings.baseURL } : {}),
     maxRetries: 0,
     dangerouslyAllowBrowser: true
   });
@@ -321,7 +322,7 @@ export type ApiTestResult = {
 };
 
 export const testApiConnection = async (
-  settings: Pick<TranslationSettings, "apiKey" | "model">,
+  settings: Pick<TranslationSettings, "apiKey" | "baseURL" | "model">,
   signal: AbortSignal
 ): Promise<ApiTestResult> => {
   const client = createOpenAIClient(settings as TranslationSettings);

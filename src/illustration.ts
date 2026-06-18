@@ -1,5 +1,5 @@
 import { applyFormattingWithAnchors, type FormattingOperation } from "./formatting";
-import { DEFAULT_TRANSLATION_MODEL } from "./translation-config";
+import { DEFAULT_IMAGE_MODEL, DEFAULT_TRANSLATION_MODEL, IMAGE_MODELS } from "./translation-config";
 import type { Block, Doc, ImageBlock } from "./types";
 
 export const ILLUSTRATION_SETTINGS_KEY = "illustrationSettings";
@@ -25,7 +25,9 @@ export type IllustrationItem = {
 
 export type IllustrationSettings = {
   apiKey: string;
-  model: string;
+  baseURL: string;
+  planningModel: string;  // 规划阶段：分析文章、决定配图位置，需要语言模型
+  model: string;          // 生图阶段：调用图片生成接口（如 gpt-image-2）
   maxImages: number;
   // 用户自定义生图风格提示词（拼到固定极简风之后、主题描述之前）
   stylePrompt: string;
@@ -78,7 +80,9 @@ export type IllustrationPortServerMessage =
 
 export const DEFAULT_ILLUSTRATION_SETTINGS: IllustrationSettings = {
   apiKey: "",
-  model: DEFAULT_TRANSLATION_MODEL,
+  baseURL: "",
+  planningModel: DEFAULT_TRANSLATION_MODEL,
+  model: DEFAULT_IMAGE_MODEL,
   maxImages: 4,
   stylePrompt: ""
 };
@@ -93,9 +97,18 @@ export const normalizeIllustrationSettings = (
 
   return {
     apiKey: String(merged.apiKey ?? "").trim(),
-    model:
-      String(merged.model ?? DEFAULT_ILLUSTRATION_SETTINGS.model).trim() ||
-      DEFAULT_ILLUSTRATION_SETTINGS.model,
+    baseURL: String(merged.baseURL ?? "").trim(),
+    planningModel:
+      String(merged.planningModel ?? DEFAULT_TRANSLATION_MODEL).trim() ||
+      DEFAULT_TRANSLATION_MODEL,
+    model: (() => {
+      const stored = String(merged.model ?? "").trim();
+      if (!stored) return DEFAULT_IMAGE_MODEL;
+      // 迁移：旧版本会把语言模型 ID 同步到此字段。若不含 "image" 且不在已知图片模型列表中，视为旧数据重置
+      const isKnownImageModel = IMAGE_MODELS.some((m) => m.id === stored);
+      const looksLikeImageModel = /image/i.test(stored);
+      return isKnownImageModel || looksLikeImageModel ? stored : DEFAULT_IMAGE_MODEL;
+    })(),
     maxImages,
     stylePrompt: String(merged.stylePrompt ?? "").trim()
   };

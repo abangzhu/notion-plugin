@@ -14,6 +14,7 @@ export type DetectedLanguage = "zh-CN" | "en" | "unknown";
 
 export type TranslationSettings = {
   apiKey: string;
+  baseURL: string;
   model: string;
   targetLanguage: string;
   mode: TranslationMode;
@@ -89,6 +90,7 @@ export type TranslationPortServerMessage =
 
 export const DEFAULT_TRANSLATION_SETTINGS: TranslationSettings = {
   apiKey: "",
+  baseURL: "",
   model: DEFAULT_TRANSLATION_MODEL,
   targetLanguage: "zh-CN",
   mode: "normal",
@@ -196,6 +198,7 @@ export const normalizeTranslationSettings = (
   return {
     ...merged,
     apiKey: String(merged.apiKey ?? "").trim(),
+    baseURL: String(merged.baseURL ?? "").trim(),
     model: String(merged.model ?? DEFAULT_TRANSLATION_SETTINGS.model).trim() || DEFAULT_TRANSLATION_SETTINGS.model,
     targetLanguage:
       String(merged.targetLanguage ?? DEFAULT_TRANSLATION_SETTINGS.targetLanguage).trim() === "en"

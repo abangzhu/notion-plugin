@@ -2,10 +2,12 @@ import { writeClipboard } from "./clipboard";
 import { extractDoc, getPageKey } from "./platform";
 import { renderDocToHtml, renderDocToMarkdown, renderDocToText } from "./renderer";
 import {
+  IMAGE_MODELS,
   STYLE_PRESET_OPTIONS,
   TARGET_AUDIENCE_OPTIONS,
   TARGET_LANGUAGE_OPTIONS,
-  TRANSLATION_MODELS
+  TRANSLATION_MODELS,
+  type TranslationModelConfig
 } from "./translation-config";
 import {
   applyTranslationOutputsToDoc,
@@ -1051,12 +1053,9 @@ const createDrawer = () => {
   apiKeyToggleButton.style.transform = "translateY(-50%)";
   setApiKeyToggleVisual(apiKeyToggleButton, false);
 
-  const modelSelect = createSelect(
-    TRANSLATION_MODELS.map((model) => ({
-      value: model.id,
-      label: model.label
-    }))
-  );
+  const modelInput = createTextInput("text");
+  modelInput.placeholder = "输入模型 ID";
+
   const modeSelect = createSelect([
     { value: "quick", label: "Quick" },
     { value: "normal", label: "Normal" }
@@ -1106,9 +1105,91 @@ const createDrawer = () => {
   apiKeyControl.appendChild(apiKeyInput);
   apiKeyControl.appendChild(apiKeyToggleButton);
 
+  // 给 input 包一层 relative 容器并附加右侧复制按钮
+  const makeInputControl = (input: HTMLInputElement): { control: HTMLDivElement; copyButton: HTMLButtonElement } => {
+    const control = document.createElement("div");
+    control.style.position = "relative";
+    control.style.display = "flex";
+    control.style.alignItems = "center";
+    control.style.width = "100%";
+    const copyButton = createIconButton();
+    copyButton.innerHTML = COPY_ICON;
+    copyButton.title = "复制";
+    copyButton.setAttribute("aria-label", "复制");
+    copyButton.style.position = "absolute";
+    copyButton.style.top = "50%";
+    copyButton.style.right = "8px";
+    copyButton.style.transform = "translateY(-50%)";
+    copyButton.addEventListener("click", async () => {
+      const text = input.value.trim();
+      if (!text) return;
+      await navigator.clipboard.writeText(text).catch(() => {});
+      copyButton.innerHTML = CHECK_ICON;
+      globalThis.setTimeout(() => { copyButton.innerHTML = COPY_ICON; }, 1500);
+    });
+    input.style.paddingRight = "42px";
+    control.appendChild(input);
+    control.appendChild(copyButton);
+    return { control, copyButton };
+  };
+
+  const baseURLInput = createTextInput("url");
+  baseURLInput.placeholder = "留空使用 OpenAI 官方接口（如 https://your-gateway.com/v1）";
+  styleControl(baseURLInput);
+  const { control: baseURLControl, copyButton: baseURLCopyButton } = makeInputControl(baseURLInput);
+
+  styleControl(modelInput);
+
+  // input + 复制按钮 + 可点击建议 chips（避免原生 datalist 在扩展 content script 中被事件拦截）
+  const makeModelField = (
+    input: HTMLInputElement,
+    models: TranslationModelConfig[]
+  ): { wrapper: HTMLDivElement; copyButton: HTMLButtonElement } => {
+    const { control, copyButton } = makeInputControl(input);
+
+    const chipsRow = document.createElement("div");
+    chipsRow.style.display = "flex";
+    chipsRow.style.flexWrap = "wrap";
+    chipsRow.style.gap = "6px";
+    chipsRow.style.marginTop = "6px";
+
+    const chips = models.map((model) => {
+      const chip = createSegment(model.label, false);
+      // mousedown 代替 click：bindClickableControl 内部用 pointerdown/preventDefault 会吞掉 click 事件
+      chip.addEventListener("mousedown", (e) => {
+        e.preventDefault(); // 阻止 input 失焦
+        input.value = model.id;
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+        syncChips();
+      });
+      chipsRow.appendChild(chip);
+      return { model, chip };
+    });
+
+    const syncChips = () => {
+      chips.forEach(({ model, chip }) => applySegmentStyle(chip, input.value === model.id));
+    };
+
+    input.addEventListener("input", syncChips);
+    syncChips();
+
+    const wrapper = document.createElement("div");
+    wrapper.appendChild(control);
+    wrapper.appendChild(chipsRow);
+    return { wrapper, copyButton };
+  };
+
+  const { wrapper: modelWrapper, copyButton: modelCopyButton } = makeModelField(modelInput, TRANSLATION_MODELS);
+
+  const imageModelInput = createTextInput("text");
+  imageModelInput.placeholder = "输入图片模型 ID";
+  styleControl(imageModelInput);
+  const { wrapper: imageModelWrapper, copyButton: imageModelCopyButton } = makeModelField(imageModelInput, IMAGE_MODELS);
+
   const basicFields = [
     createField("API Key", apiKeyControl, "", false),
-    createField("模型", modelSelect, "模型列表来自 src/translation-models.json"),
+    createField("API 地址", baseURLControl, "LiteLLM Gateway 或 OpenAI 兼容网关地址，留空使用官方接口"),
+    createField("语言模型", modelWrapper, "翻译和排版使用；支持 OpenAI / Claude 系列", false),
     createField("目标语言", targetLanguageSegment, "", false),
     createField("翻译模式", modeSelect)
   ];
@@ -1128,6 +1209,7 @@ const createDrawer = () => {
     createField("额外说明", formattingExtraInstructionsInput, "对智能排版的额外要求（不会改动正文文字）")
   ];
   const illustrationFields = [
+    createField("图片模型", imageModelWrapper, "生图使用；留空回退到语言模型", false),
     createField("配图数量上限", maxImagesSelect, "16:9 宽图；生图较慢，数量越多越慢"),
     createField(
       "风格提示词",
@@ -1144,7 +1226,9 @@ const createDrawer = () => {
 
   [
     apiKeyInput,
-    modelSelect,
+    baseURLInput,
+    modelInput,
+    imageModelInput,
     modeSelect,
     audienceSelect,
     stylePresetSelect,
@@ -1159,6 +1243,7 @@ const createDrawer = () => {
     illustrationStylePromptInput
   ].forEach((control) => bindEditableControl(control));
   bindClickableControl(apiKeyToggleButton);
+  [baseURLCopyButton, modelCopyButton, imageModelCopyButton].forEach((btn) => bindClickableControl(btn));
 
   const settingsFooter = document.createElement("div");
   settingsFooter.style.display = "flex";
@@ -1252,7 +1337,9 @@ const createDrawer = () => {
     settingsInputs: {
       apiKeyInput,
       apiKeyToggleButton,
-      modelSelect,
+      baseURLInput,
+      modelInput,
+      imageModelInput,
       targetLanguageSegment,
       targetLanguageButtons,
       modeSelect,
@@ -1753,7 +1840,11 @@ export const initDrawer = () => {
     settingsInputs.apiKeyInput.value = translationSettings.apiKey;
     settingsInputs.apiKeyInput.type = "password";
     setApiKeyToggleVisual(settingsInputs.apiKeyToggleButton, false);
-    ensureSelectValue(settingsInputs.modelSelect, translationSettings.model, translationSettings.model);
+    settingsInputs.baseURLInput.value = translationSettings.baseURL;
+    settingsInputs.modelInput.value = translationSettings.model;
+    settingsInputs.modelInput.dispatchEvent(new Event("input"));
+    settingsInputs.imageModelInput.value = illustrationSettings.model;
+    settingsInputs.imageModelInput.dispatchEvent(new Event("input"));
     settingsInputs.targetLanguageSegment.dataset.value = translationSettings.targetLanguage;
     syncTargetLanguageButtons();
     settingsInputs.modeSelect.value = translationSettings.mode;
@@ -2777,14 +2868,15 @@ export const initDrawer = () => {
     if (!drawerRefs) return;
     const { settingsInputs, settingsTestButton } = drawerRefs;
     const apiKey = settingsInputs.apiKeyInput.value.trim();
-    const model = settingsInputs.modelSelect.value.trim();
+    const baseURL = settingsInputs.baseURLInput.value.trim();
+    const model = settingsInputs.modelInput.value.trim();
 
     if (!apiKey) {
       setSettingsStatus("请先填写 API Key", "error");
       return;
     }
     if (!model) {
-      setSettingsStatus("请先选择模型", "error");
+      setSettingsStatus("请先填写模型 ID", "error");
       return;
     }
 
@@ -2798,7 +2890,7 @@ export const initDrawer = () => {
 
     let result: ApiTestResult;
     try {
-      result = await testApiConnection({ apiKey, model }, testConnectionController.signal);
+      result = await testApiConnection({ apiKey, baseURL, model }, testConnectionController.signal);
     } finally {
       settingsTestButton.textContent = originalLabel;
       setButtonDisabled(settingsTestButton, false);
@@ -2813,7 +2905,8 @@ export const initDrawer = () => {
     const { settingsInputs } = drawerRefs;
     const nextSettings = normalizeTranslationSettings({
       apiKey: settingsInputs.apiKeyInput.value,
-      model: settingsInputs.modelSelect.value,
+      baseURL: settingsInputs.baseURLInput.value,
+      model: settingsInputs.modelInput.value,
       targetLanguage: settingsInputs.targetLanguageSegment.dataset.value ?? "zh-CN",
       mode: settingsInputs.modeSelect.value as TranslationSettings["mode"],
       audience: settingsInputs.audienceSelect.value,
@@ -2844,11 +2937,18 @@ export const initDrawer = () => {
       }
       const nextFormattingSettings = normalizeFormattingSettings({
         ...formattingSettings,
+        apiKey: nextSettings.apiKey,
+        baseURL: nextSettings.baseURL,
+        model: nextSettings.model,
         aggressiveness: settingsInputs.aggressivenessSelect.value as FormattingAggressiveness,
         extraInstructions: settingsInputs.formattingExtraInstructionsInput.value
       });
       const nextIllustrationSettings = normalizeIllustrationSettings({
         ...illustrationSettings,
+        apiKey: nextSettings.apiKey,
+        baseURL: nextSettings.baseURL,
+        planningModel: nextSettings.model,               // 语言模型：规划配图位置
+        model: settingsInputs.imageModelInput.value,     // 图片模型：生成图片
         maxImages: Number(settingsInputs.maxImagesSelect.value),
         stylePrompt: settingsInputs.illustrationStylePromptInput.value
       });
