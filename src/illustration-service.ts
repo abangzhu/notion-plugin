@@ -150,7 +150,7 @@ const createImageClient = (settings: IllustrationSettings) =>
     dangerouslyAllowBrowser: true
   });
 
-// 单张生图：responses API + image_generation tool，从 output 数组取 base64。
+// 单张生图：Images API（/v1/images/generations），从 data 数组取 base64。
 export const generateImage = async (params: {
   prompt: string;
   settings: IllustrationSettings;
@@ -173,14 +173,15 @@ export const generateImage = async (params: {
     );
 
     try {
-      // Images API（/v1/images/generations）：直接调用图片模型，不经 Responses API 编排
+      // Images API（/v1/images/generations）：直接调用图片模型，不经 Responses API 编排。
+      // gpt-image-1/2 不支持 response_format 参数（固定返回 b64_json，不像 dall-e 系列可选 url），
+      // 经 LiteLLM 网关时传了该参数会被严格校验直接拒绝（UnsupportedParamsError），所以这里不传。
       const imageResponse = await client.images.generate(
         {
           model: params.settings.model,
           prompt: input,
           n: 1,
-          size: IMAGE_SIZE as "1536x1024",
-          response_format: "b64_json"
+          size: IMAGE_SIZE as "1536x1024"
         },
         { signal: requestController.signal }
       );
