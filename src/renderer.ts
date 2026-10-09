@@ -1,8 +1,7 @@
-import { mergeRenderOptions, getCodeHighlightColors } from "./theme";
+import { mergeRenderOptions } from "./theme";
 import type { RenderOptions } from "./theme";
 import type { Block, Doc, Inline, ListBlock, ListItem, TableBlock } from "./types";
 import type { ImageMap } from "./image-loader";
-import { highlightCode } from "./highlighter";
 
 type ReferenceItem = {
   href: string;
@@ -159,6 +158,16 @@ const inlinesToHtml = (
   indexMap?: Map<string, number>
 ): string => inlines.map((inline) => inlineToHtml(inline, options, indexMap)).join("");
 
+// 微信编辑器把 span[leaf] 作为文字叶子节点。统一包裹富文本内容可以避免
+// line-height 校验器把同一行里的 strong/span/code 片段误算成多行。
+const wrapLeaf = (html: string): string => `<span leaf="">${html}</span>`;
+
+const inlinesToLeafHtml = (
+  inlines: Inline[],
+  options: RenderOptions,
+  indexMap?: Map<string, number>
+): string => wrapLeaf(inlinesToHtml(inlines, options, indexMap));
+
 const buildBodyParagraphStyle = (options: RenderOptions, color?: string): string =>
   `font-family:${options.fontStack};font-size:${options.typography.bodySize};line-height:${options.typography.bodyLineHeight};margin:0 0 ${options.typography.bodyMarginBottom};color:${color ?? options.colors.text};font-weight:${options.typography.bodyWeight};${options.typography.letterSpacing ? `letter-spacing:${options.typography.letterSpacing};` : ""}text-align:left;white-space:pre-line;min-height:20px;padding-left:0em;`;
 
@@ -202,7 +211,7 @@ const headingToHtml = (
   if (center && !hs.fitContent) parts.push("text-align:center");
   if (hs.decoration === "underline") parts.push(`border-bottom:2px solid ${accent}`, "padding-bottom:6px");
   else if (hs.decoration === "sidebar") parts.push(`border-left:3px solid ${accent}`, "padding-left:10px");
-  return `<${tag} style="${parts.join(";")};">${inlinesToHtml(block.children, options, indexMap)}</${tag}>`;
+  return `<${tag} style="${parts.join(";")};">${inlinesToLeafHtml(block.children, options, indexMap)}</${tag}>`;
 };
 
 // 金句卡：引用的卡片式变体（居中、大引号、卡片底色），由 StyleTokens.quoteVariant === "card" 触发
@@ -214,11 +223,11 @@ const quoteCardHtml = (
   const inner = inlinesToHtml(block.children, options, indexMap) || "<br/>";
   const baseSize = Number.parseFloat(options.typography.bodySize) || 16;
   const bg = options.style.calloutBg ?? options.colors.codeBg;
-  return `<section style="margin:24px 0;padding:22px 20px;background:${bg};border-radius:${options.style.radiusMd};text-align:left;font-family:${options.fontStack};"><span style="display:block;font-size:${Math.round(
+  return `<section style="margin:24px 0;padding:22px 20px;background:${bg};border-radius:${options.style.radiusMd};text-align:left;font-family:${options.fontStack};"><p style="font-size:${Math.round(
     baseSize * 2.4
-  )}px;line-height:1;color:${options.colors.link};margin:0 0 6px;">&ldquo;</span><p style="margin:0;font-size:${Math.round(
+  )}px;line-height:1.2;color:${options.colors.link};margin:0 0 6px;"><span leaf="">&ldquo;</span></p><p style="margin:0;font-size:${Math.round(
     baseSize * 1.1
-  )}px;line-height:1.7;font-weight:600;color:${options.colors.text};">${inner}</p></section>`;
+  )}px;line-height:1.7;font-weight:600;color:${options.colors.text};">${wrapLeaf(inner)}</p></section>`;
 };
 
 const listItemToHtml = (
@@ -233,7 +242,7 @@ const listItemToHtml = (
   const nestedHtml =
     item.nested?.map((nested) => listToHtml(nested, options, depth + 1, indexMap, imageMap)).join("") ?? "";
   const paragraphStyle = buildBodyParagraphStyle(options, textColor);
-  return `<li><p style="${paragraphStyle}"><span leaf="">${textHtml}</span></p>${nestedHtml}</li>`;
+  return `<li><p style="${paragraphStyle}">${wrapLeaf(textHtml)}</p>${nestedHtml}</li>`;
 };
 
 const listToHtml = (
@@ -305,7 +314,7 @@ const tableToHtml = (
       const cells = row.cells
         .map((cell) => {
           const cellPadding = isBento ? "10px 12px" : isAcademia ? "8px 10px" : "6px 8px";
-          return `<${cellTag} style="word-break:break-all;font-family:${options.fontStack};font-size:${options.typography.bodySize};vertical-align:top;width:${widthPercent}%;border:1px solid ${borderColor};padding:${cellPadding};${headerBg}${headerWeight}${options.typography.letterSpacing ? `letter-spacing:${options.typography.letterSpacing};` : ""}">${inlinesToHtml(
+          return `<${cellTag} style="word-break:break-all;font-family:${options.fontStack};font-size:${options.typography.bodySize};vertical-align:top;width:${widthPercent}%;border:1px solid ${borderColor};padding:${cellPadding};${headerBg}${headerWeight}${options.typography.letterSpacing ? `letter-spacing:${options.typography.letterSpacing};` : ""}">${inlinesToLeafHtml(
             cell.children,
             options,
             indexMap
@@ -348,7 +357,7 @@ const blockToHtml = (
           block.level === 1
             ? `0 0 ${Math.round(baseSize * 1.8)}px`
             : `${Math.round(baseSize * 1.7)}px 0 ${Math.round(baseSize * 0.7)}px`;
-        return `<${tag} style="font-family:${options.fontStack};font-size:${fontSize};font-weight:700;margin:${margin};line-height:1.35;color:${options.colors.text};letter-spacing:0;">${inlinesToHtml(
+        return `<${tag} style="font-family:${options.fontStack};font-size:${fontSize};font-weight:700;margin:${margin};line-height:1.35;color:${options.colors.text};letter-spacing:0;">${inlinesToLeafHtml(
           block.children,
           options,
           indexMap
@@ -356,20 +365,20 @@ const blockToHtml = (
       }
       if (isMatcha) {
         if (block.level === 1) {
-          return `<${tag} style="font-family:${options.fontStack};font-size:${h1Size}px;font-weight:700;line-height:1.45;margin:0 0 ${Math.round(baseSize * 2)}px;color:${options.colors.text};padding:0 0 10px;border-bottom:2px solid ${options.colors.border};">${inlinesToHtml(
+          return `<${tag} style="font-family:${options.fontStack};font-size:${h1Size}px;font-weight:700;line-height:1.45;margin:0 0 ${Math.round(baseSize * 2)}px;color:${options.colors.text};padding:0 0 10px;border-bottom:2px solid ${options.colors.border};">${inlinesToLeafHtml(
             block.children,
             options,
             indexMap
           )}</${tag}>`;
         }
         if (block.level === 2) {
-          return `<${tag} style="font-family:${options.fontStack};font-size:${h2Size}px;font-weight:700;line-height:1.45;margin:${Math.round(baseSize * 2.2)}px 0 ${Math.round(baseSize * 1)}px;color:${options.colors.text};padding:2px 0 2px 12px;border-left:4px solid ${options.colors.link};background:#f7fbf4;">${inlinesToHtml(
+          return `<${tag} style="font-family:${options.fontStack};font-size:${h2Size}px;font-weight:700;line-height:1.45;margin:${Math.round(baseSize * 2.2)}px 0 ${Math.round(baseSize * 1)}px;color:${options.colors.text};padding:2px 0 2px 12px;border-left:4px solid ${options.colors.link};background:#f7fbf4;">${inlinesToLeafHtml(
             block.children,
             options,
             indexMap
           )}</${tag}>`;
         }
-        return `<${tag} style="font-family:${options.fontStack};font-size:${h3Size}px;font-weight:700;line-height:1.45;margin:${Math.round(baseSize * 1.8)}px 0 ${Math.round(baseSize * 0.8)}px;color:${options.colors.link};">${inlinesToHtml(
+        return `<${tag} style="font-family:${options.fontStack};font-size:${h3Size}px;font-weight:700;line-height:1.45;margin:${Math.round(baseSize * 1.8)}px 0 ${Math.round(baseSize * 0.8)}px;color:${options.colors.link};">${inlinesToLeafHtml(
           block.children,
           options,
           indexMap
@@ -377,20 +386,20 @@ const blockToHtml = (
       }
       if (isAcademia) {
         if (block.level === 1) {
-          return `<${tag} style="font-family:${options.fontStack};font-size:${h1Size}px;font-weight:700;line-height:1.45;margin:0 0 ${Math.round(baseSize * 2.1)}px;color:${options.colors.text};text-align:center;padding:0 0 12px;border-bottom:1px solid ${options.colors.border};">${inlinesToHtml(
+          return `<${tag} style="font-family:${options.fontStack};font-size:${h1Size}px;font-weight:700;line-height:1.45;margin:0 0 ${Math.round(baseSize * 2.1)}px;color:${options.colors.text};text-align:center;padding:0 0 12px;border-bottom:1px solid ${options.colors.border};">${inlinesToLeafHtml(
             block.children,
             options,
             indexMap
           )}</${tag}>`;
         }
         if (block.level === 2) {
-          return `<${tag} style="font-family:${options.fontStack};font-size:${h2Size}px;font-weight:700;line-height:1.45;margin:${Math.round(baseSize * 2.4)}px 0 ${Math.round(baseSize)}px;color:${options.colors.link};">${inlinesToHtml(
+          return `<${tag} style="font-family:${options.fontStack};font-size:${h2Size}px;font-weight:700;line-height:1.45;margin:${Math.round(baseSize * 2.4)}px 0 ${Math.round(baseSize)}px;color:${options.colors.link};">${inlinesToLeafHtml(
             block.children,
             options,
             indexMap
           )}</${tag}>`;
         }
-        return `<${tag} style="font-family:${options.fontStack};font-size:${h3Size}px;font-weight:700;line-height:1.45;margin:${Math.round(baseSize * 1.8)}px 0 ${Math.round(baseSize * 0.8)}px;color:${options.colors.text};padding-left:10px;border-left:3px solid ${options.colors.border};">${inlinesToHtml(
+        return `<${tag} style="font-family:${options.fontStack};font-size:${h3Size}px;font-weight:700;line-height:1.45;margin:${Math.round(baseSize * 1.8)}px 0 ${Math.round(baseSize * 0.8)}px;color:${options.colors.text};padding-left:10px;border-left:3px solid ${options.colors.border};">${inlinesToLeafHtml(
           block.children,
           options,
           indexMap
@@ -398,20 +407,20 @@ const blockToHtml = (
       }
       if (isBento) {
         if (block.level === 1) {
-          return `<${tag} style="font-family:${options.fontStack};font-size:${h1Size}px;font-weight:800;line-height:1.35;margin:0 0 ${Math.round(baseSize * 2)}px;color:${options.colors.text};padding:0 0 12px;border-bottom:1px solid ${options.colors.divider};">${inlinesToHtml(
+          return `<${tag} style="font-family:${options.fontStack};font-size:${h1Size}px;font-weight:800;line-height:1.35;margin:0 0 ${Math.round(baseSize * 2)}px;color:${options.colors.text};padding:0 0 12px;border-bottom:1px solid ${options.colors.divider};">${inlinesToLeafHtml(
             block.children,
             options,
             indexMap
           )}</${tag}>`;
         }
         if (block.level === 2) {
-          return `<${tag} style="font-family:${options.fontStack};font-size:${h2Size}px;font-weight:800;line-height:1.35;margin:${Math.round(baseSize * 2)}px 0 ${Math.round(baseSize)}px;color:${options.colors.text};padding:8px 12px;background:#f8fafc;border:1px solid ${options.colors.divider};border-left:4px solid ${options.colors.link};border-radius:8px;">${inlinesToHtml(
+          return `<${tag} style="font-family:${options.fontStack};font-size:${h2Size}px;font-weight:800;line-height:1.35;margin:${Math.round(baseSize * 2)}px 0 ${Math.round(baseSize)}px;color:${options.colors.text};padding:8px 12px;background:#f8fafc;border:1px solid ${options.colors.divider};border-left:4px solid ${options.colors.link};border-radius:8px;">${inlinesToLeafHtml(
             block.children,
             options,
             indexMap
           )}</${tag}>`;
         }
-        return `<${tag} style="font-family:${options.fontStack};font-size:${h3Size}px;font-weight:700;line-height:1.4;margin:${Math.round(baseSize * 1.6)}px 0 ${Math.round(baseSize * 0.7)}px;color:${options.colors.link};">${inlinesToHtml(
+        return `<${tag} style="font-family:${options.fontStack};font-size:${h3Size}px;font-weight:700;line-height:1.4;margin:${Math.round(baseSize * 1.6)}px 0 ${Math.round(baseSize * 0.7)}px;color:${options.colors.link};">${inlinesToLeafHtml(
           block.children,
           options,
           indexMap
@@ -420,7 +429,7 @@ const blockToHtml = (
       return headingToHtml(block, options, indexMap);
     }
     case "paragraph":
-      return `<p style="${buildBodyParagraphStyle(options)}">${inlinesToHtml(
+      return `<p style="${buildBodyParagraphStyle(options)}">${inlinesToLeafHtml(
         block.children,
         options,
         indexMap
@@ -429,48 +438,48 @@ const blockToHtml = (
       if (block.variant === "card" || options.style.quoteVariant === "card")
         return quoteCardHtml(block, options, indexMap);
       if (isNotion) {
-        return `<blockquote style="font-family:${options.fontStack};border-left:3px solid ${options.colors.border};padding:2px 0 2px 14px;margin:18px 0;color:${options.colors.subText};line-height:${options.typography.bodyLineHeight};font-size:${options.typography.bodySize};">${inlinesToHtml(
+        return `<blockquote style="font-family:${options.fontStack};border-left:3px solid ${options.colors.border};padding:2px 0 2px 14px;margin:18px 0;color:${options.colors.subText};line-height:${options.typography.bodyLineHeight};font-size:${options.typography.bodySize};">${inlinesToLeafHtml(
           block.children,
           options,
           indexMap
         )}</blockquote>`;
       }
       if (isMatcha) {
-        return `<blockquote style="font-family:${options.fontStack};border-left:4px solid ${options.colors.link};padding:12px 14px;margin:20px 0;background:#f5faf2;color:${options.colors.text};line-height:${options.typography.bodyLineHeight};font-size:${options.typography.bodySize};">${inlinesToHtml(
+        return `<blockquote style="font-family:${options.fontStack};border-left:4px solid ${options.colors.link};padding:12px 14px;margin:20px 0;background:#f5faf2;color:${options.colors.text};line-height:${options.typography.bodyLineHeight};font-size:${options.typography.bodySize};">${inlinesToLeafHtml(
           block.children,
           options,
           indexMap
         )}</blockquote>`;
       }
       if (isAcademia) {
-        return `<blockquote style="font-family:${options.fontStack};border-top:1px solid ${options.colors.border};border-bottom:1px solid ${options.colors.border};padding:14px 8px;margin:22px 0;background:#fffaf1;color:${options.colors.subText};line-height:${options.typography.bodyLineHeight};font-size:${options.typography.bodySize};font-style:italic;">${inlinesToHtml(
+        return `<blockquote style="font-family:${options.fontStack};border-top:1px solid ${options.colors.border};border-bottom:1px solid ${options.colors.border};padding:14px 8px;margin:22px 0;background:#fffaf1;color:${options.colors.subText};line-height:${options.typography.bodyLineHeight};font-size:${options.typography.bodySize};font-style:italic;">${inlinesToLeafHtml(
           block.children,
           options,
           indexMap
         )}</blockquote>`;
       }
       if (isBento) {
-        return `<blockquote style="font-family:${options.fontStack};border:1px solid ${options.colors.divider};border-left:4px solid ${options.colors.link};border-radius:8px;padding:12px 14px;margin:20px 0;background:#f8fafc;color:${options.colors.text};line-height:${options.typography.bodyLineHeight};font-size:${options.typography.bodySize};">${inlinesToHtml(
+        return `<blockquote style="font-family:${options.fontStack};border:1px solid ${options.colors.divider};border-left:4px solid ${options.colors.link};border-radius:8px;padding:12px 14px;margin:20px 0;background:#f8fafc;color:${options.colors.text};line-height:${options.typography.bodyLineHeight};font-size:${options.typography.bodySize};">${inlinesToLeafHtml(
           block.children,
           options,
           indexMap
         )}</blockquote>`;
       }
       if (isBlack) {
-        return `<blockquote style="font-family:${options.fontStack};border-left:8px solid ${options.colors.border};padding:10px;margin:20px 0;background-color:#f5f5f5;color:${options.colors.subText};line-height:${options.typography.bodyLineHeight};">${inlinesToHtml(
+        return `<blockquote style="font-family:${options.fontStack};border-left:8px solid ${options.colors.border};padding:10px;margin:20px 0;background-color:#f5f5f5;color:${options.colors.subText};line-height:${options.typography.bodyLineHeight};font-size:${options.typography.bodySize};">${inlinesToLeafHtml(
           block.children,
           options,
           indexMap
         )}</blockquote>`;
       }
       if (isSspai) {
-        return `<blockquote style="font-family:${options.fontStack};border-left:2px solid ${options.colors.link};padding:24px 16px 12px;margin:24px 0 36px;background:url('https://new-notion-1315843248.cos.ap-guangzhou.myqcloud.com/theme/pie/pie_blockquote.svg') 12px 0 / 12px no-repeat;color:${options.colors.subText};line-height:${options.typography.bodyLineHeight};">${inlinesToHtml(
+        return `<blockquote style="font-family:${options.fontStack};border-left:2px solid ${options.colors.link};padding:24px 16px 12px;margin:24px 0 36px;background:url('https://new-notion-1315843248.cos.ap-guangzhou.myqcloud.com/theme/pie/pie_blockquote.svg') 12px 0 / 12px no-repeat;color:${options.colors.subText};line-height:${options.typography.bodyLineHeight};font-size:${options.typography.bodySize};">${inlinesToLeafHtml(
           block.children,
           options,
           indexMap
         )}</blockquote>`;
       }
-      return `<blockquote style="font-family:${options.fontStack};border-left:${isAccentTheme ? "3px" : "4px"} solid ${options.colors.border};padding:${isAccentTheme ? "1px 10px 1px 20px" : "0 0 0 12px"};margin:${isAccentTheme ? "20px 0" : "16px 0"};color:${options.colors.subText};line-height:${options.typography.bodyLineHeight};">${inlinesToHtml(
+      return `<blockquote style="font-family:${options.fontStack};border-left:${isAccentTheme ? "3px" : "4px"} solid ${options.colors.border};padding:${isAccentTheme ? "1px 10px 1px 20px" : "0 0 0 12px"};margin:${isAccentTheme ? "20px 0" : "16px 0"};color:${options.colors.subText};line-height:${options.typography.bodyLineHeight};font-size:${options.typography.bodySize};">${inlinesToLeafHtml(
         block.children,
         options,
         indexMap
@@ -479,24 +488,24 @@ const blockToHtml = (
       const icon = escapeHtml((block.icon || "💡").trim() || "💡");
       const inner = inlinesToHtml(block.children, options, indexMap) || "<br/>";
       if (isNotion) {
-        return `<section style="margin:16px 0;padding:12px 14px;background:${options.style.calloutBg ?? options.colors.codeBg};border-radius:6px;color:${options.colors.text};font-family:${options.fontStack};line-height:${options.typography.bodyLineHeight};font-size:${options.typography.bodySize};${options.typography.letterSpacing ? `letter-spacing:${options.typography.letterSpacing};` : ""}"><p style="margin:0;"><strong style="margin-right:8px;">${icon}</strong>${inner}</p></section>`;
+        return `<section style="margin:16px 0;padding:12px 14px;background:${options.style.calloutBg ?? options.colors.codeBg};border-radius:6px;color:${options.colors.text};font-family:${options.fontStack};line-height:${options.typography.bodyLineHeight};font-size:${options.typography.bodySize};${options.typography.letterSpacing ? `letter-spacing:${options.typography.letterSpacing};` : ""}"><p style="margin:0;"><span leaf=""><strong style="margin-right:8px;">${icon}</strong>${inner}</span></p></section>`;
       }
       if (isMatcha) {
-        return `<section style="margin:16px 0;padding:12px 14px;background:#f2f8ef;border:1px solid ${options.colors.border};border-left:4px solid ${options.colors.link};border-radius:6px;color:${options.colors.text};font-family:${options.fontStack};line-height:${options.typography.bodyLineHeight};font-size:${options.typography.bodySize};${options.typography.letterSpacing ? `letter-spacing:${options.typography.letterSpacing};` : ""}"><p style="margin:0;"><strong style="margin-right:8px;color:${options.colors.link};">${icon}</strong>${inner}</p></section>`;
+        return `<section style="margin:16px 0;padding:12px 14px;background:#f2f8ef;border:1px solid ${options.colors.border};border-left:4px solid ${options.colors.link};border-radius:6px;color:${options.colors.text};font-family:${options.fontStack};line-height:${options.typography.bodyLineHeight};font-size:${options.typography.bodySize};${options.typography.letterSpacing ? `letter-spacing:${options.typography.letterSpacing};` : ""}"><p style="margin:0;"><span leaf=""><strong style="margin-right:8px;color:${options.colors.link};">${icon}</strong>${inner}</span></p></section>`;
       }
       if (isAcademia) {
-        return `<section style="margin:18px 0;padding:12px 14px;background:#fbf4e8;border:1px solid ${options.colors.divider};border-top:3px solid ${options.colors.border};color:${options.colors.text};font-family:${options.fontStack};line-height:${options.typography.bodyLineHeight};font-size:${options.typography.bodySize};${options.typography.letterSpacing ? `letter-spacing:${options.typography.letterSpacing};` : ""}"><p style="margin:0;"><strong style="margin-right:8px;color:${options.colors.link};">${icon}</strong>${inner}</p></section>`;
+        return `<section style="margin:18px 0;padding:12px 14px;background:#fbf4e8;border:1px solid ${options.colors.divider};border-top:3px solid ${options.colors.border};color:${options.colors.text};font-family:${options.fontStack};line-height:${options.typography.bodyLineHeight};font-size:${options.typography.bodySize};${options.typography.letterSpacing ? `letter-spacing:${options.typography.letterSpacing};` : ""}"><p style="margin:0;"><span leaf=""><strong style="margin-right:8px;color:${options.colors.link};">${icon}</strong>${inner}</span></p></section>`;
       }
       if (isBento) {
-        return `<section style="margin:16px 0;padding:14px;background:#f8fafc;border:1px solid ${options.colors.divider};border-radius:8px;box-shadow:0 1px 0 rgba(15,23,42,0.04);color:${options.colors.text};font-family:${options.fontStack};line-height:${options.typography.bodyLineHeight};font-size:${options.typography.bodySize};${options.typography.letterSpacing ? `letter-spacing:${options.typography.letterSpacing};` : ""}"><p style="margin:0;"><strong style="margin-right:8px;color:${options.colors.link};">${icon}</strong>${inner}</p></section>`;
+        return `<section style="margin:16px 0;padding:14px;background:#f8fafc;border:1px solid ${options.colors.divider};border-radius:8px;box-shadow:0 1px 0 rgba(15,23,42,0.04);color:${options.colors.text};font-family:${options.fontStack};line-height:${options.typography.bodyLineHeight};font-size:${options.typography.bodySize};${options.typography.letterSpacing ? `letter-spacing:${options.typography.letterSpacing};` : ""}"><p style="margin:0;"><span leaf=""><strong style="margin-right:8px;color:${options.colors.link};">${icon}</strong>${inner}</span></p></section>`;
       }
       if (isBlack) {
-        return `<section style="margin:16px 0;padding:10px 12px;background:#f5f5f5;border-left:8px solid ${options.colors.border};color:${options.colors.text};font-family:${options.fontStack};line-height:${options.typography.bodyLineHeight};font-size:${options.typography.bodySize};${options.typography.letterSpacing ? `letter-spacing:${options.typography.letterSpacing};` : ""}"><p style="margin:0;"><strong style="margin-right:6px;">${icon}</strong>${inner}</p></section>`;
+        return `<section style="margin:16px 0;padding:10px 12px;background:#f5f5f5;border-left:8px solid ${options.colors.border};color:${options.colors.text};font-family:${options.fontStack};line-height:${options.typography.bodyLineHeight};font-size:${options.typography.bodySize};${options.typography.letterSpacing ? `letter-spacing:${options.typography.letterSpacing};` : ""}"><p style="margin:0;"><span leaf=""><strong style="margin-right:6px;">${icon}</strong>${inner}</span></p></section>`;
       }
       if (isSspai) {
-        return `<section style="margin:16px 0;padding:10px 12px;background:#fff7f7;border-left:2px solid ${options.colors.link};color:${options.colors.text};font-family:${options.fontStack};line-height:${options.typography.bodyLineHeight};font-size:${options.typography.bodySize};${options.typography.letterSpacing ? `letter-spacing:${options.typography.letterSpacing};` : ""}"><p style="margin:0;"><strong style="margin-right:6px;color:${options.colors.link};">${icon}</strong>${inner}</p></section>`;
+        return `<section style="margin:16px 0;padding:10px 12px;background:#fff7f7;border-left:2px solid ${options.colors.link};color:${options.colors.text};font-family:${options.fontStack};line-height:${options.typography.bodyLineHeight};font-size:${options.typography.bodySize};${options.typography.letterSpacing ? `letter-spacing:${options.typography.letterSpacing};` : ""}"><p style="margin:0;"><span leaf=""><strong style="margin-right:6px;color:${options.colors.link};">${icon}</strong>${inner}</span></p></section>`;
       }
-      return `<section style="margin:16px 0;padding:10px 12px;background:${options.style.calloutBg ?? options.colors.codeBg};border-left:3px solid ${options.colors.border};border-radius:4px;color:${options.colors.text};font-family:${options.fontStack};line-height:${options.typography.bodyLineHeight};font-size:${options.typography.bodySize};${options.typography.letterSpacing ? `letter-spacing:${options.typography.letterSpacing};` : ""}"><p style="margin:0;"><strong style="margin-right:6px;color:${isAccentTheme ? options.colors.link : options.colors.text};">${icon}</strong>${inner}</p></section>`;
+      return `<section style="margin:16px 0;padding:10px 12px;background:${options.style.calloutBg ?? options.colors.codeBg};border-left:3px solid ${options.colors.border};border-radius:4px;color:${options.colors.text};font-family:${options.fontStack};line-height:${options.typography.bodyLineHeight};font-size:${options.typography.bodySize};${options.typography.letterSpacing ? `letter-spacing:${options.typography.letterSpacing};` : ""}"><p style="margin:0;"><span leaf=""><strong style="margin-right:6px;color:${isAccentTheme ? options.colors.link : options.colors.text};">${icon}</strong>${inner}</span></p></section>`;
     }
     case "divider":
       if (isNotion || isMatcha || isAcademia || isBento) {
@@ -517,23 +526,30 @@ const blockToHtml = (
     }
     case "code": {
       const langLabel = block.language ?? "";
-      const codeColors = getCodeHighlightColors(options.themeId);
-      const highlighted = highlightCode(block.code, block.language, codeColors);
       const macDots = `<span style="display:flex;padding:10px 14px 0px;"><svg xmlns="http://www.w3.org/2000/svg" version="1.1" x="0px" y="0px" width="45px" height="13px" viewBox="0 0 450 130" role="img" aria-label="code-window"><ellipse cx="50" cy="65" rx="50" ry="52" stroke="rgb(220,60,54)" stroke-width="2" fill="rgb(237,108,96)"></ellipse><ellipse cx="225" cy="65" rx="50" ry="52" stroke="rgb(218,151,33)" stroke-width="2" fill="rgb(247,193,81)"></ellipse><ellipse cx="400" cy="65" rx="50" ry="52" stroke="rgb(27,161,37)" stroke-width="2" fill="rgb(100,200,86)"></ellipse></svg></span>`;
       const langAttr = langLabel ? ` data-language-pending="${escapeHtml(langLabel)}"` : "";
-      if (isPineapple) {
-        return `<pre style="color:#333;background:#fafafa;font-size:90%;overflow-x:auto;border-radius:8px;line-height:1.5;margin:${options.style.codeMargin};padding:0px !important;border:1px solid #f0f0f0;box-shadow:0 2px 10px rgba(0,0,0,0.3);">${macDots}<code${langAttr} style="font-size:90%;border-radius:4px;display:block;padding:0.5em 1em 1em;overflow-x:auto;text-indent:0px;color:inherit;background:none;white-space:pre;margin:0px;font-family:Menlo, Monaco, Consolas, monospace;">${highlighted}</code></pre>`;
-      }
-      if (isNotion || isMatcha || isAcademia || isBento) {
-        const codeTextColor = isAcademia ? "#4f3f30" : "#24292f";
-        const codeBorder = isBento
-          ? `border:1px solid ${options.colors.divider};`
-          : isAcademia || isMatcha || isNotion
-            ? `border:1px solid ${options.colors.divider};`
-            : "";
-        return `<pre style="color:${codeTextColor};background:${options.colors.codeBg};font-size:90%;overflow-x:auto;border-radius:${isAcademia ? "0" : "8px"};line-height:1.5;margin:${options.style.codeMargin};padding:0px !important;${codeBorder}">${macDots}<code${langAttr} style="font-size:90%;border-radius:4px;display:block;padding:0.5em 1em 1em;overflow-x:auto;text-indent:0px;color:inherit;background:none;white-space:pre;margin:0px;font-family:Menlo, Monaco, Consolas, monospace;">${highlighted}</code></pre>`;
-      }
-      return `<pre style="color:rgb(201,209,217);background:rgb(13,17,23);font-size:90%;overflow-x:auto;border-radius:8px;line-height:1.5;margin:${options.style.codeMargin};padding:0px !important;">${macDots}<code${langAttr} style="font-size:90%;border-radius:4px;display:block;padding:0.5em 1em 1em;overflow-x:auto;text-indent:0px;color:inherit;background:none;white-space:pre;margin:0px;font-family:Menlo, Monaco, Consolas, monospace;">${highlighted}</code></pre>`;
+      const codeTextColor = isPineapple
+        ? "#333"
+        : isNotion || isMatcha || isBento
+          ? "#24292f"
+          : isAcademia
+            ? "#4f3f30"
+            : "rgb(201,209,217)";
+      const codeBackground = isPineapple
+        ? "#fafafa"
+        : isNotion || isMatcha || isAcademia || isBento
+          ? options.colors.codeBg
+          : "rgb(13,17,23)";
+      const codeBorder =
+        isPineapple || isNotion || isMatcha || isAcademia || isBento
+          ? `border:1px solid ${isPineapple ? "#f0f0f0" : options.colors.divider};`
+          : "";
+      const codeShadow = isPineapple ? "box-shadow:0 2px 10px rgba(0,0,0,0.3);" : "";
+      const codeText = wrapLeaf(escapeHtml(block.code));
+
+      // 公众号会把语法高亮产生的多个 span 误识别为多行文本。代码块复制时采用
+      // 单一文字叶子节点，并用 pre-wrap 保留缩进与换行，兼顾移动端窄屏阅读。
+      return `<section style="color:${codeTextColor};background:${codeBackground};font-size:${options.typography.bodySize};border-radius:${isAcademia ? "0" : "8px"};line-height:1.6;margin:${options.style.codeMargin};padding:0;${codeBorder}${codeShadow}">${macDots}<code${langAttr} style="font-size:90%;line-height:1.6;border-radius:4px;display:block;padding:0.5em 1em 1em;overflow-wrap:anywhere;word-break:break-word;text-indent:0;color:inherit;background:none;white-space:pre-wrap;margin:0;font-family:Menlo, Monaco, Consolas, monospace;">${codeText}</code></section>`;
     }
     case "emphasis": {
       const inner = inlinesToHtml(block.children, options, indexMap) || "<br/>";
@@ -543,9 +559,9 @@ const blockToHtml = (
         ? `letter-spacing:${options.typography.letterSpacing};`
         : "";
       if (isMatcha) {
-        return `<section style="margin:18px 0;padding:14px 16px;background:#eef7ec;border:1px solid ${options.colors.border};border-left:4px solid ${accent};border-radius:6px;font-family:${options.fontStack};font-size:${options.typography.bodySize};line-height:${options.typography.bodyLineHeight};color:${options.colors.text};${ls}"><p style="margin:0;font-weight:600;">${inner}</p></section>`;
+        return `<section style="margin:18px 0;padding:14px 16px;background:#eef7ec;border:1px solid ${options.colors.border};border-left:4px solid ${accent};border-radius:6px;font-family:${options.fontStack};font-size:${options.typography.bodySize};line-height:${options.typography.bodyLineHeight};color:${options.colors.text};${ls}"><p style="margin:0;font-weight:600;">${wrapLeaf(inner)}</p></section>`;
       }
-      return `<section style="margin:18px 0;padding:14px 16px;background:${bg};border-left:4px solid ${accent};border-radius:${options.style.radiusMd};font-family:${options.fontStack};font-size:${options.typography.bodySize};line-height:${options.typography.bodyLineHeight};color:${options.colors.text};${ls}"><p style="margin:0;font-weight:600;">${inner}</p></section>`;
+      return `<section style="margin:18px 0;padding:14px 16px;background:${bg};border-left:4px solid ${accent};border-radius:${options.style.radiusMd};font-family:${options.fontStack};font-size:${options.typography.bodySize};line-height:${options.typography.bodyLineHeight};color:${options.colors.text};${ls}"><p style="margin:0;font-weight:600;">${wrapLeaf(inner)}</p></section>`;
     }
     case "steps": {
       const accent = options.colors.link;
@@ -556,7 +572,7 @@ const blockToHtml = (
           const badge = block.ordered
             ? `<span style="flex:0 0 auto;display:inline-block;width:24px;height:24px;border-radius:50%;background:${accent};color:#fff;font-size:13px;line-height:24px;text-align:center;font-weight:700;margin-right:10px;">${i + 1}</span>`
             : `<span style="flex:0 0 auto;display:inline-block;width:8px;height:8px;border-radius:50%;background:${accent};margin:9px 14px 0 6px;"></span>`;
-          return `<section style="display:flex;align-items:flex-start;margin:0 0 12px;">${badge}<p style="margin:0;flex:1;font-family:${options.fontStack};font-size:${options.typography.bodySize};line-height:${options.typography.bodyLineHeight};color:${options.colors.text};">${inner}</p></section>`;
+          return `<section style="display:flex;align-items:flex-start;margin:0 0 12px;">${badge}<p style="margin:0;flex:1;font-family:${options.fontStack};font-size:${options.typography.bodySize};line-height:${options.typography.bodyLineHeight};color:${options.colors.text};">${wrapLeaf(inner)}</p></section>`;
         })
         .join("");
       return `<section style="margin:18px 0;padding:16px 16px 4px;background:${bg};border-radius:${options.style.radiusMd};font-family:${options.fontStack};">${rows}</section>`;
@@ -587,9 +603,9 @@ const renderReferencesSection = (
       const label = item.text.trim() || host;
       const hostSuffix =
         label === host ? "" : ` <span style="opacity:0.5;">（${escapeHtml(host)}）</span>`;
-      return `<p style="font-family:${options.fontStack};font-size:${options.typography.bodySize};line-height:${options.typography.bodyLineHeight};margin:6px 0;color:${options.colors.text};${options.typography.letterSpacing ? `letter-spacing:${options.typography.letterSpacing};` : ""}"><span style="opacity:0.6;">[${idx + 1}]</span> <a href="${escapeHtml(
+      return `<p style="font-family:${options.fontStack};font-size:${options.typography.bodySize};line-height:${options.typography.bodyLineHeight};margin:6px 0;color:${options.colors.text};${options.typography.letterSpacing ? `letter-spacing:${options.typography.letterSpacing};` : ""}">${wrapLeaf(`<span style="opacity:0.6;">[${idx + 1}]</span> <a href="${escapeHtml(
         item.href
-      )}" style="color:${options.colors.link};text-decoration:none;border-bottom:1px solid ${options.colors.divider};">${escapeHtml(label)}</a>${hostSuffix}</p>`;
+      )}" style="color:${options.colors.link};text-decoration:none;border-bottom:1px solid ${options.colors.divider};">${escapeHtml(label)}</a>${hostSuffix}`)}</p>`;
     })
     .join("");
   return `${headingHtml}${itemHtml}`;
@@ -610,9 +626,9 @@ const renderTitleBlock = (doc: Doc, options: RenderOptions): string => {
   const bar = `<p style="margin:0 0 12px;"><span style="display:inline-block;width:36px;height:3px;background:${options.colors.link};"></span></p>`;
   const heading = `<h1 style="font-family:${options.fontStack};font-size:${Math.round(
     baseSize * 1.9
-  )}px;font-weight:800;line-height:1.3;margin:0 0 ${Math.round(baseSize * 1.2)}px;color:${options.colors.text};">${escapeHtml(
+  )}px;font-weight:800;line-height:1.3;margin:0 0 ${Math.round(baseSize * 1.2)}px;color:${options.colors.text};">${wrapLeaf(escapeHtml(
     title
-  )}</h1>`;
+  ))}</h1>`;
   const divider = `<hr style="border:none;border-top:1px solid ${options.colors.divider};margin:0 0 ${Math.round(
     baseSize * 1.6
   )}px;" />`;
