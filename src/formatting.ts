@@ -14,6 +14,7 @@ export type FormattingBlockSummary = {
   type: Block["type"];
   level?: 1 | 2 | 3;
   text: string;
+  emphasisCandidates?: { id: string; text: string }[];
 };
 
 // AI 只能输出"排版决策指令"，schema 中没有任何正文文字字段 → 构造性保证不改字
@@ -25,6 +26,7 @@ export type ConvertOperation =
 
 export type FormattingOperation =
   | ConvertOperation
+  | { op: "emphasize-inline"; blockId: string; candidateId: string }
   | { op: "insert-divider"; afterBlockId: string }
   | { op: "group-steps"; blockIds: string[]; ordered?: boolean };
 
@@ -48,6 +50,7 @@ export type FormattingJobRequest = {
 export type FormattingPortClientMessage =
   | { type: "formatting/start"; payload: FormattingJobRequest }
   | { type: "formatting/cancel"; jobId: string }
+  | { type: "formatting/discard-result"; sourceHash: string; jobId?: string }
   | { type: "formatting/query-state" };
 
 export type FormattingBackgroundState = {
@@ -124,7 +127,7 @@ const djb2 = (input: string): string => {
 
 // 排版设置 hash（剔除 apiKey），用于缓存键，避免敏感信息进入存储键
 export const hashFormatting = (settings: FormattingSettings): string =>
-  `fmt_${djb2(JSON.stringify({ ...settings, apiKey: "" }))}`;
+  `fmt_v2_${djb2(JSON.stringify({ ...settings, apiKey: "" }))}`;
 
 // === 纯文本提取（仅用于摘要与不改字校验，不含渲染层附加的 icon/序号） ===
 
@@ -162,13 +165,59 @@ const blockInlineText = (block: Block): string => {
 
 const MAX_SUMMARY_LEN = 200;
 
+// Candidate IDs refer to exact source spans. The model chooses meaning, never offsets or text.
+const emphasisCandidates = (block: Block) => {
+  if (block.type !== "paragraph") return [];
+  if (block.children.some((child) => child.type === "bold" || child.type === "highlight")) return [];
+  const text = inlineText(block.children);
+  const candidates: { id: string; text: string; start: number; end: number }[] = [];
+  const pattern = /[^\n]+?(?:[。！？；，]|[.!?;,](?=\s|$)|(?=\n|$))/gu;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(text)) !== null) {
+    const trimmed = match[0].trim();
+    const start = match.index + match[0].indexOf(trimmed);
+    const end = start + trimmed.length;
+    if (trimmed.length < 4 || trimmed.length > 64 || trimmed.length > text.length * 0.4) continue;
+    let offset = 0;
+    const plain = block.children.every((child) => {
+      const overlaps = offset < end && offset + child.content.length > start;
+      offset += child.content.length;
+      return !overlaps || (child.type === "text" && !child.color);
+    });
+    if (plain) candidates.push({ id: `span_${start}_${end}`, text: trimmed, start, end });
+  }
+  return candidates.slice(0, 12);
+};
+
 export const collectFormattingInputs = (doc: Doc): FormattingBlockSummary[] =>
   doc.blocks.map((block, index) => ({
     blockId: `blk_${index}`,
     type: block.type,
     ...(block.type === "heading" ? { level: block.level } : {}),
-    text: blockInlineText(block).slice(0, MAX_SUMMARY_LEN)
+    text: blockInlineText(block).slice(0, MAX_SUMMARY_LEN),
+    ...(block.type === "paragraph" ? {
+      emphasisCandidates: emphasisCandidates(block).map(({ id, text }) => ({ id, text }))
+    } : {})
   }));
+
+const emphasizeInline = (block: Block, candidateId: string): Block => {
+  const candidate = emphasisCandidates(block).find((span) => span.id === candidateId);
+  if (!candidate || block.type !== "paragraph") return block;
+  let offset = 0;
+  const children = block.children.flatMap((child): Inline[] => {
+    const start = offset;
+    offset += child.content.length;
+    const left = Math.max(0, candidate.start - start);
+    const right = Math.min(child.content.length, candidate.end - start);
+    if (left >= right) return [child];
+    return [
+      ...(left > 0 ? [{ ...child, content: child.content.slice(0, left) }] : []),
+      { type: "bold", content: child.content.slice(left, right), color: "accent" as const },
+      ...(right < child.content.length ? [{ ...child, content: child.content.slice(right) }] : [])
+    ];
+  });
+  return { ...block, children };
+};
 
 // === 回填：把排版指令不可变地应用到 Doc，正文文字始终从原块搬运 ===
 
@@ -244,7 +293,8 @@ export const applyFormattingWithAnchors = (
   const dividerAfter = new Set<number>();
   const consumed = new Set<number>();
 
-  operations.forEach((op) => {
+  const inlineAt = new Map<number, string>();
+  normalizeFormattingOperations(operations, collectFormattingInputs(doc)).forEach((op) => {
     if (op.op === "group-steps") {
       const sorted = Array.from(
         new Set(op.blockIds.map(indexOf).filter((index) => index >= 0))
@@ -260,6 +310,8 @@ export const applyFormattingWithAnchors = (
     } else if (op.op === "insert-divider") {
       const index = indexOf(op.afterBlockId);
       if (index >= 0) dividerAfter.add(index);
+    } else if (op.op === "emphasize-inline") {
+      inlineAt.set(indexOf(op.blockId), op.candidateId);
     } else if (op.op === "convert") {
       const index = indexOf(op.blockId);
       if (index >= 0) convertAt.set(index, op);
@@ -286,7 +338,9 @@ export const applyFormattingWithAnchors = (
     }
     const conversion = convertAt.get(index);
     const outIndex = out.length;
-    out.push(conversion ? convertBlock(blocks[index], conversion) : blocks[index]);
+    const candidateId = inlineAt.get(index);
+    const block = candidateId ? emphasizeInline(blocks[index], candidateId) : blocks[index];
+    out.push(conversion ? convertBlock(block, conversion) : block);
     anchorOf.set(index, outIndex);
     if (dividerAfter.has(index)) out.push({ type: "divider" });
     index += 1;
@@ -298,48 +352,79 @@ export const applyFormattingWithAnchors = (
 export const applyFormattingOperationsToDoc = (doc: Doc, operations: FormattingOperation[]): Doc =>
   applyFormattingWithAnchors(doc, operations).doc;
 
-const SPECIAL_CONVERT_TYPES = new Set<string>(["quote-card", "callout", "emphasis"]);
-
-const parseBlockIndex = (blockId: string): number => {
-  const m = /^blk_(\d+)$/.exec(blockId);
-  return m ? Number(m[1]) : -1;
-};
-
-// 后处理：过滤 AI 输出的排版指令，防止连续引用和样式密度过高。
-// 不改文字，只减少 convert 操作数量。insert-divider 和 group-steps 保持不变。
-export const normalizeFormattingOperations = (ops: FormattingOperation[]): FormattingOperation[] => {
-  const converts = ops
-    .filter((o): o is ConvertOperation => o.op === "convert")
-    .map((op) => ({ index: parseBlockIndex(op.blockId), op }))
-    .filter(({ index }) => index >= 0)
-    .sort((a, b) => a.index - b.index);
-
-  const removed = new Set<string>();
-
-  // 规则 1：连续 quote-card（相邻索引差 ≤ 1）只保留每 run 的第一个
-  let lastQuoteCardIndex = -99;
-  converts.forEach(({ index, op }) => {
-    if (op.to === "quote-card") {
-      if (index - lastQuoteCardIndex <= 1) {
-        removed.add(op.blockId);
-      } else {
-        lastQuoteCardIndex = index;
+// Validate model output and cached plans before rendering. One structural change per block,
+// at most one visual card/group per four source blocks; inline emphasis has a separate budget.
+export const normalizeFormattingOperations = (
+  value: unknown,
+  inputs?: FormattingBlockSummary[]
+): FormattingOperation[] => {
+  if (!Array.isArray(value)) return [];
+  const byId = new Map(inputs?.map((input) => [input.blockId, input]));
+  const validId = (id: unknown): id is string =>
+    typeof id === "string" && /^blk_\d+$/.test(id) && (!inputs || byId.has(id));
+  const indexOf = (id: string) => Number(id.slice(4));
+  const valid: FormattingOperation[] = [];
+  for (const op of value) {
+    if (!op || typeof op !== "object") continue;
+    if (op.op === "convert" && validId(op.blockId)) {
+      const input = byId.get(op.blockId);
+      if (input && input.type !== "paragraph") continue;
+      if (op.to === "heading") {
+        if (![1, 2, 3].includes(op.level) || (input && (input.text.length > 48 || /[。！？\n]/u.test(input.text)))) continue;
+        valid.push({ op: "convert", blockId: op.blockId, to: "heading", level: op.level });
+      } else if (["quote-card", "callout", "emphasis"].includes(op.to)) {
+        if (input && input.text.length > (op.to === "quote-card" ? 90 : 180)) continue;
+        valid.push({ op: "convert", blockId: op.blockId, to: op.to,
+          ...(op.to === "callout" && typeof op.icon === "string" ? { icon: sanitizeEmoji(op.icon) } : {}) });
       }
+    } else if (op.op === "emphasize-inline" && validId(op.blockId) && typeof op.candidateId === "string") {
+      if (!byId.get(op.blockId)?.emphasisCandidates?.some((candidate) => candidate.id === op.candidateId)) continue;
+      valid.push({ op: "emphasize-inline", blockId: op.blockId, candidateId: op.candidateId });
+    } else if (op.op === "group-steps" && Array.isArray(op.blockIds)) {
+      if (op.blockIds.length < 2 || op.blockIds.length > 6 || !op.blockIds.every(validId)) continue;
+      const ids = op.blockIds as string[];
+      if (ids.some((id, i) => (inputs && byId.get(id)?.type !== "paragraph") || (i > 0 && indexOf(id) !== indexOf(ids[i - 1]) + 1))) continue;
+      if (op.ordered !== undefined && typeof op.ordered !== "boolean") continue;
+      valid.push({ op: "group-steps", blockIds: ids, ordered: op.ordered ?? true });
+    } else if (op.op === "insert-divider" && validId(op.afterBlockId)) {
+      const i = indexOf(op.afterBlockId);
+      if (inputs && (!byId.has(`blk_${i + 1}`) || [byId.get(op.afterBlockId), byId.get(`blk_${i + 1}`)].some((b) => b?.type === "heading" || b?.type === "divider"))) continue;
+      valid.push({ op: "insert-divider", afterBlockId: op.afterBlockId });
     }
-  });
-
-  // 规则 2：任意 4 块窗口内 special（quote-card/callout/emphasis）数 ≤ 2
-  const specials = converts.filter(({ op }) => SPECIAL_CONVERT_TYPES.has(op.to) && !removed.has(op.blockId));
-  specials.forEach(({ index }) => {
-    const inWindow = specials.filter(
-      ({ index: i, op }) => i >= index && i <= index + 3 && !removed.has(op.blockId)
-    );
-    if (inWindow.length > 2) {
-      inWindow.slice(2).forEach(({ op }) => removed.add(op.blockId));
+  }
+  const position = (op: FormattingOperation) => indexOf(op.op === "group-steps" ? op.blockIds[0] : op.op === "insert-divider" ? op.afterBlockId : op.blockId);
+  const priority = (op: FormattingOperation) => op.op === "emphasize-inline" ? 0 : op.op === "insert-divider" ? 2 : 1;
+  valid.sort((a, b) => priority(a) - priority(b) || position(a) - position(b));
+  const occupied = new Set<number>();
+  const decorations = (inputs ?? []).filter((b) => ["quote", "callout", "emphasis", "steps"].includes(b.type)).map((b) => indexOf(b.blockId));
+  const dividers: number[] = [];
+  const result: FormattingOperation[] = [];
+  const total = inputs?.length ?? Math.max(0, ...valid.map(position)) + 1;
+  const cardLimit = Math.ceil(total / 4);
+  let cardCount = decorations.length;
+  let emphasisCount = 0;
+  for (const op of valid) {
+    const index = position(op);
+    if (op.op === "insert-divider") {
+      if (index === 0 || occupied.has(index) || decorations.some((i) => Math.abs(i - index) < 2) || dividers.some((i) => Math.abs(i - index) < 6)) continue;
+      dividers.push(index);
+      result.push(op);
+      continue;
     }
-  });
-
-  return ops.filter((op) => op.op !== "convert" || !removed.has(op.blockId));
+    const indices = op.op === "group-steps" ? op.blockIds.map(indexOf) : [index];
+    if (indices.some((i) => occupied.has(i))) continue;
+    const card = op.op === "group-steps" || (op.op === "convert" && op.to !== "heading");
+    if (card && (cardCount >= cardLimit || decorations.some((i) => indices.some((j) => Math.abs(i - j) < 4)))) continue;
+    if (op.op === "emphasize-inline" && emphasisCount >= Math.ceil(total / 3)) continue;
+    if (op.op === "emphasize-inline") emphasisCount++;
+    if (card) {
+      decorations.push(...indices);
+      cardCount++;
+    }
+    indices.forEach((i) => occupied.add(i));
+    result.push(op);
+  }
+  return result.sort((a, b) => position(a) - position(b));
 };
 
 // dev/测试护栏：校验排版前后正文 inline 文本逐字一致（顺序也一致）。

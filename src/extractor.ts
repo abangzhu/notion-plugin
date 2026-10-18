@@ -1,4 +1,5 @@
 import type { Block, Doc, Inline, ListBlock, ListItem, TableBlock, TableRow } from "./types";
+import { collectVirtualizedItems } from "./virtual-scroll";
 
 const isElement = (node: Node): node is HTMLElement => node.nodeType === Node.ELEMENT_NODE;
 
@@ -294,6 +295,91 @@ const getBlockElements = (root: Element): HTMLElement[] => {
   });
 };
 
+const findScrollContainer = (root: Element): HTMLElement | null => {
+  let current: Element | null = root;
+  while (current) {
+    const { overflowY } = getComputedStyle(current);
+    if (/auto|scroll|overlay/.test(overflowY) && current.clientHeight > 0 &&
+        current.scrollHeight > current.clientHeight + 1) {
+      return current as HTMLElement;
+    }
+    current = current.parentElement;
+  }
+
+  const documentScroller = document.scrollingElement as HTMLElement | null;
+  return documentScroller && documentScroller.scrollHeight > documentScroller.clientHeight + 1
+    ? documentScroller
+    : null;
+};
+
+const CONTENT_POLL_INTERVAL_MS = 50;
+const CONTENT_QUIET_TIME_MS = 150;
+const CONTENT_TIMEOUT_MS = 4_000;
+
+const getScrollViewport = (container: HTMLElement): { top: number; bottom: number } => {
+  const top = container === document.scrollingElement
+    ? 0
+    : container.getBoundingClientRect().top + container.clientTop;
+  return { top, bottom: top + container.clientHeight };
+};
+
+const getVisibleBlockElements = (root: Element, container: HTMLElement): HTMLElement[] => {
+  const viewport = getScrollViewport(container);
+  return getBlockElements(root).filter((element) => {
+    const bounds = element.getBoundingClientRect();
+    return bounds.bottom > viewport.top && bounds.top < viewport.bottom;
+  });
+};
+
+const isViewportMounted = (root: Element, container: HTMLElement, blocks: HTMLElement[]): boolean => {
+  const viewport = getScrollViewport(container);
+  const bounds = root.getBoundingClientRect();
+  const style = getComputedStyle(root);
+  const contentTop = bounds.top + (Number.parseFloat(style.paddingTop) || 0);
+  const contentBottom = bounds.bottom - (Number.parseFloat(style.paddingBottom) || 0);
+  if (contentBottom <= viewport.top || contentTop >= viewport.bottom) return true;
+  if (!blocks.length) return false;
+
+  const mountedBounds = blocks.map((block) => {
+    const rectangle = block.getBoundingClientRect();
+    const blockStyle = getComputedStyle(block);
+    return {
+      top: rectangle.top - (Number.parseFloat(blockStyle.marginTop) || 0),
+      bottom: rectangle.bottom + (Number.parseFloat(blockStyle.marginBottom) || 0)
+    };
+  });
+  return Math.min(...mountedBounds.map(({ top }) => top)) <= Math.max(contentTop, viewport.top) + 1 &&
+    Math.max(...mountedBounds.map(({ bottom }) => bottom)) >= Math.min(contentBottom, viewport.bottom) - 1;
+};
+
+const waitForVirtualizedContent = async (
+  root: Element,
+  container: HTMLElement,
+  assertCurrentPage: () => void
+): Promise<void> => {
+  const startedAt = Date.now();
+  let stableSince = startedAt;
+  let previousSignature = "";
+
+  while (Date.now() - startedAt < CONTENT_TIMEOUT_MS) {
+    assertCurrentPage();
+    const visibleBlocks = getVisibleBlockElements(root, container);
+    const signature = JSON.stringify([container.scrollHeight, ...visibleBlocks.map((element) =>
+      [element.dataset.blockId, element.innerHTML ?? element.textContent])]);
+    if (signature !== previousSignature) {
+      previousSignature = signature;
+      stableSince = Date.now();
+    }
+
+    if (isViewportMounted(root, container, visibleBlocks) && Date.now() - stableSince >= CONTENT_QUIET_TIME_MS) {
+      return;
+    }
+    await new Promise<void>((resolve) => setTimeout(resolve, CONTENT_POLL_INTERVAL_MS));
+  }
+
+  throw new Error("Notion 正文尚未加载稳定，请等待页面加载完成后重试");
+};
+
 const extractListBlock = (listEl: HTMLOListElement | HTMLUListElement): ListBlock => {
   const ordered = listEl.tagName === "OL";
   const items: ListItem[] = Array.from(listEl.children)
@@ -508,16 +594,64 @@ const extractBlock = (blockEl: HTMLElement): Block | null => {
   };
 };
 
-export const extractDocFromNotion = (): Doc => {
-  const root =
-    document.querySelector(".notion-page-content") ??
-    document.querySelector('[class*="notion-page-content"]') ??
-    document.body;
+const getNotionRoot = (): Element => document.querySelector(".notion-page-content") ??
+  document.querySelector('[class*="notion-page-content"]') ?? document.body;
 
-  const blocks = getBlockElements(root).map(extractBlock).filter((block): block is Block => Boolean(block));
+const extractNotionRoot = async (root: Element, url: string): Promise<Doc> => {
+  const assertCurrentPage = () => {
+    if (!root.isConnected || getNotionRoot() !== root || window.location.href !== url) {
+      throw new Error("Notion 页面已切换，请在当前页面重新刷新预览");
+    }
+  };
+  assertCurrentPage();
+  const scrollContainer = findScrollContainer(root);
+  let blocks: Block[];
+
+  if (scrollContainer && scrollContainer.scrollHeight > scrollContainer.clientHeight + 1) {
+    const items = await collectVirtualizedItems({
+      getScrollTop: () => scrollContainer.scrollTop,
+      getViewportSize: () => scrollContainer.clientHeight,
+      getTotalSize: () => scrollContainer.scrollHeight,
+      scrollTo: (position) => {
+        scrollContainer.scrollTop = position;
+      },
+      waitForContent: () => waitForVirtualizedContent(root, scrollContainer, assertCurrentPage),
+      readItems: () => {
+        assertCurrentPage();
+        return getVisibleBlockElements(root, scrollContainer).flatMap((element) => {
+          const id = element.dataset.blockId;
+          const block = extractBlock(element);
+          return id && block ? [{ id, block }] : [];
+        });
+      }
+    });
+    blocks = items.map(({ block }) => block);
+  } else {
+    blocks = getBlockElements(root).map(extractBlock).filter((block): block is Block => Boolean(block));
+  }
+
+  assertCurrentPage();
   const mergedBlocks = mergeAdjacentCodeBlocks(mergeAdjacentLists(blocks));
 
   return {
     blocks: mergedBlocks
   };
+};
+
+let activeExtraction: { root: Element; url: string; promise: Promise<Doc> } | null = null;
+
+export const extractDocFromNotion = (): Promise<Doc> => {
+  const root = getNotionRoot();
+  const url = window.location.href;
+  if (activeExtraction) {
+    if (activeExtraction.root === root && activeExtraction.url === url) return activeExtraction.promise;
+    // Let a previous page finish restoring its scroller before starting the new page.
+    return activeExtraction.promise.catch(() => undefined).then(() => extractDocFromNotion());
+  }
+
+  const promise = extractNotionRoot(root, url).finally(() => {
+    if (activeExtraction?.promise === promise) activeExtraction = null;
+  });
+  activeExtraction = { root, url, promise };
+  return promise;
 };

@@ -1,3 +1,4 @@
+import { THEME_PRESETS, type ThemePreset } from "./theme-presets";
 import { writeClipboard } from "./clipboard";
 import { extractDoc, getPageKey } from "./platform";
 import { renderDocToHtml, renderDocToMarkdown, renderDocToText } from "./renderer";
@@ -86,13 +87,6 @@ const FORMATTING_CACHE_PREFIX = "formattingCache";
 const ILLUSTRATION_CACHE_PREFIX = "illustrationCache";
 
 
-type ThemePreset = {
-  id: string;
-  label: string;
-  colors: Partial<ThemeColors>;
-  typography?: Partial<Typography>;
-};
-
 type FontPreset = {
   id: string;
   label: string;
@@ -115,147 +109,6 @@ type IllustrationCacheEntry = {
   items: IllustrationItem[];
   createdAt: number;
 };
-
-const THEME_PRESETS: ThemePreset[] = [
-  { id: "default", label: "默认主题", colors: {}, typography: { letterSpacing: "0.02em" } },
-  {
-    id: "notion",
-    label: "Notion 白",
-    colors: {
-      text: "#2f3437",
-      subText: "#6b6f72",
-      link: "#0f6bff",
-      border: "#d9d9d6",
-      divider: "#e9e9e7",
-      codeBg: "#f7f6f3",
-      inlineCodeBg: "#efefed"
-    },
-    typography: {
-      bodySize: "15px",
-      bodyLineHeight: "27px",
-      bodyMarginBottom: "12px",
-      headingWeight: "700",
-      letterSpacing: "0"
-    }
-  },
-  {
-    id: "matcha",
-    label: "抹茶计划",
-    colors: {
-      text: "#263229",
-      subText: "#657368",
-      link: "#4d7c59",
-      border: "#b9d4b8",
-      divider: "#dbe8d8",
-      codeBg: "#f2f8ef",
-      inlineCodeBg: "#e7f1e3"
-    },
-    typography: {
-      bodySize: "15px",
-      bodyLineHeight: "28px",
-      bodyMarginBottom: "12px",
-      headingWeight: "700",
-      letterSpacing: "0.03em"
-    }
-  },
-  {
-    id: "academia",
-    label: "学院档案",
-    colors: {
-      text: "#372f27",
-      subText: "#786a5d",
-      link: "#8a5a2b",
-      border: "#c8ac7a",
-      divider: "#eadcc5",
-      codeBg: "#f8f1e6",
-      inlineCodeBg: "#efe3d0"
-    },
-    typography: {
-      bodySize: "15px",
-      bodyLineHeight: "28px",
-      bodyMarginBottom: "12px",
-      headingWeight: "700",
-      letterSpacing: "0.04em"
-    }
-  },
-  {
-    id: "bento",
-    label: "Bento OS",
-    colors: {
-      text: "#172033",
-      subText: "#647086",
-      link: "#2563eb",
-      border: "#cbd5e1",
-      divider: "#e2e8f0",
-      codeBg: "#f8fafc",
-      inlineCodeBg: "#eef2ff"
-    },
-    typography: {
-      bodySize: "15px",
-      bodyLineHeight: "27px",
-      bodyMarginBottom: "11px",
-      headingWeight: "700",
-      letterSpacing: "0"
-    }
-  },
-  {
-    id: "red",
-    label: "活力橙",
-    colors: {
-      text: "#3f3f3f",
-      subText: "#808a87",
-      link: "#fc7930",
-      border: "#f7cfba",
-      divider: "#f0d9cc"
-    },
-    typography: {
-      bodySize: "15px",
-      bodyLineHeight: "26px",
-      bodyMarginBottom: "10px",
-      headingWeight: "700",
-      letterSpacing: "0.02em"
-    }
-  },
-  {
-    id: "blue",
-    label: "海蓝色",
-    colors: {
-      text: "#3f3f3f",
-      subText: "#808a87",
-      link: "#5296d4",
-      border: "#c3d7df",
-      divider: "#cfe0ea"
-    },
-    typography: {
-      letterSpacing: "0.02em"
-    }
-  },
-  {
-    id: "black",
-    label: "科技黑",
-    colors: {
-      text: "#1a1a1a",
-      subText: "#57606a",
-      link: "#c8472b",
-      border: "#1a1a1a",
-      divider: "#d9d9d9"
-    }
-  },
-  {
-    id: "sspai",
-    label: "魔力红",
-    colors: {
-      text: "#3f3f3f",
-      subText: "#8c8c8c",
-      link: "#f22f27",
-      border: "#f22f27",
-      divider: "#f0d2d0"
-    },
-    typography: {
-      bodyLineHeight: "28px"
-    }
-  }
-];
 
 const FONT_PRESETS: FontPreset[] = [
   { id: "default", label: "默认字体", stack: FONT_STACK_DEFAULT },
@@ -796,10 +649,18 @@ const createDrawer = () => {
   const formatSpinner = formatControls.spinner;
   const formatLabel = formatControls.labelElement;
 
+  // 已有排版结果后，允许用户清空排版（不影响配图），清空后按钮回到"智能排版"，可再次手动触发
+  const removeFormatButton = createButton("清空排版", "ghost");
+  removeFormatButton.style.display = "none";
+
   const illustrateControls = createLoadingButton("智能配图");
   const illustrateButton = illustrateControls.button;
   const illustrateSpinner = illustrateControls.spinner;
   const illustrateLabel = illustrateControls.labelElement;
+
+  // 已生成配图后，允许用户不改动排版的前提下移除配图（仅在有配图且非生成中时展示）
+  const removeIllustrationButton = createButton("移除配图", "ghost");
+  removeIllustrationButton.style.display = "none";
 
   const contentSegment = document.createElement("div");
   contentSegment.style.display = "none";
@@ -844,7 +705,9 @@ const createDrawer = () => {
 
   rowTopLeft.appendChild(translateButton);
   rowTopLeft.appendChild(formatButton);
+  rowTopLeft.appendChild(removeFormatButton);
   rowTopLeft.appendChild(illustrateButton);
+  rowTopLeft.appendChild(removeIllustrationButton);
   rowTopLeft.appendChild(contentSegment);
   rowTopLeft.appendChild(formatSegment);
   rowTopLeft.appendChild(previewSegment);
@@ -1082,6 +945,7 @@ const createDrawer = () => {
   ]);
 
   const illustrationStylePromptInput = createTextArea(3);
+  styleControl(illustrationStylePromptInput);
 
   const targetLanguageSegment = document.createElement("div");
   targetLanguageSegment.style.display = "flex";
@@ -1105,21 +969,29 @@ const createDrawer = () => {
   apiKeyControl.appendChild(apiKeyInput);
   apiKeyControl.appendChild(apiKeyToggleButton);
 
-  // 给 input 包一层 relative 容器并附加右侧复制按钮
-  const makeInputControl = (input: HTMLInputElement): { control: HTMLDivElement; copyButton: HTMLButtonElement } => {
+  // 给 input/textarea 包一层 relative 容器并附加复制按钮
+  // textarea 多行，按钮固定在右上角；input 单行，按钮垂直居中
+  const makeInputControl = (
+    input: HTMLInputElement | HTMLTextAreaElement
+  ): { control: HTMLDivElement; copyButton: HTMLButtonElement } => {
+    const isTextArea = input instanceof HTMLTextAreaElement;
     const control = document.createElement("div");
     control.style.position = "relative";
     control.style.display = "flex";
-    control.style.alignItems = "center";
+    control.style.alignItems = isTextArea ? "flex-start" : "center";
     control.style.width = "100%";
     const copyButton = createIconButton();
     copyButton.innerHTML = COPY_ICON;
     copyButton.title = "复制";
     copyButton.setAttribute("aria-label", "复制");
     copyButton.style.position = "absolute";
-    copyButton.style.top = "50%";
     copyButton.style.right = "8px";
-    copyButton.style.transform = "translateY(-50%)";
+    if (isTextArea) {
+      copyButton.style.top = "8px";
+    } else {
+      copyButton.style.top = "50%";
+      copyButton.style.transform = "translateY(-50%)";
+    }
     copyButton.addEventListener("click", async () => {
       const text = input.value.trim();
       if (!text) return;
@@ -1186,6 +1058,9 @@ const createDrawer = () => {
   styleControl(imageModelInput);
   const { wrapper: imageModelWrapper, copyButton: imageModelCopyButton } = makeModelField(imageModelInput, IMAGE_MODELS);
 
+  const { control: illustrationStylePromptControl, copyButton: illustrationStylePromptCopyButton } =
+    makeInputControl(illustrationStylePromptInput);
+
   const basicFields = [
     createField("API Key", apiKeyControl, "", false),
     createField("API 地址", baseURLControl, "LiteLLM Gateway 或 OpenAI 兼容网关地址，留空使用官方接口"),
@@ -1213,8 +1088,9 @@ const createDrawer = () => {
     createField("配图数量上限", maxImagesSelect, "16:9 宽图；生图较慢，数量越多越慢"),
     createField(
       "风格提示词",
-      illustrationStylePromptInput,
-      "英文最佳，拼到内置极简风之后。例：warm pastel tones, hand-drawn texture"
+      illustrationStylePromptControl,
+      "英文最佳，拼到内置极简风之后。例：warm pastel tones, hand-drawn texture",
+      false
     )
   ];
 
@@ -1243,7 +1119,9 @@ const createDrawer = () => {
     illustrationStylePromptInput
   ].forEach((control) => bindEditableControl(control));
   bindClickableControl(apiKeyToggleButton);
-  [baseURLCopyButton, modelCopyButton, imageModelCopyButton].forEach((btn) => bindClickableControl(btn));
+  [baseURLCopyButton, modelCopyButton, imageModelCopyButton, illustrationStylePromptCopyButton].forEach((btn) =>
+    bindClickableControl(btn)
+  );
 
   const settingsFooter = document.createElement("div");
   settingsFooter.style.display = "flex";
@@ -1315,9 +1193,11 @@ const createDrawer = () => {
     formatButton,
     formatSpinner,
     formatLabel,
+    removeFormatButton,
     illustrateButton,
     illustrateSpinner,
     illustrateLabel,
+    removeIllustrationButton,
     formatSegment,
     originalFormatButton,
     formattedFormatButton,
@@ -1373,6 +1253,7 @@ export const initDrawer = () => {
   let sourceDoc: Doc | null = null;
   let sourceHash = "";
   let sourcePageKey = "";
+  let refreshPromise: Promise<void> | null = null;
   let originalHtml = "";
   let originalText = "";
   let originalMarkdown = "";
@@ -1406,11 +1287,13 @@ export const initDrawer = () => {
   let formattingJobId = "";
   let formattingPort: chrome.runtime.Port | null = null;
   let suppressNextFormattingDisconnect = false;
+  const discardedFormattingSources = new Set<string>();
 
   let illustrationState: IllustrationState = "idle";
   let illustrationJobId = "";
   let illustrationPort: chrome.runtime.Port | null = null;
   let suppressNextIllustrationDisconnect = false;
+  const discardedIllustrationSources = new Set<string>();
 
   let currentTheme = THEME_PRESETS[0];
   let currentFont = FONT_PRESETS[0];
@@ -1957,6 +1840,11 @@ export const initDrawer = () => {
   const syncControlState = () => {
     if (!drawerRefs) return;
 
+    const refreshing = refreshPromise !== null;
+    const sourceUnavailable = refreshing || (Boolean(sourcePageKey) && sourcePageKey !== getPageKey());
+    drawerRefs.refreshButton.textContent = refreshing ? "读取全文中…" : "刷新";
+    setButtonDisabled(drawerRefs.refreshButton, refreshing);
+
     drawerRefs.contentSegment.style.display = translatedDoc ? "flex" : "none";
     applySegmentStyle(drawerRefs.originalContentButton, contentMode === "original" || !translatedDoc);
     applySegmentStyle(drawerRefs.translatedContentButton, contentMode === "translated" && !!translatedDoc);
@@ -1967,7 +1855,7 @@ export const initDrawer = () => {
 
     const translateDisabledReason = getTranslateDisabledReason();
     const translateDisabled =
-      (translationState !== "translating" && translateDisabledReason.length > 0) || false;
+      sourceUnavailable || (translationState !== "translating" && translateDisabledReason.length > 0);
 
     drawerRefs.translateSpinner.style.display = translationState === "translating" ? "inline-block" : "none";
     drawerRefs.translateLabel.textContent =
@@ -2000,7 +1888,7 @@ export const initDrawer = () => {
     applySegmentStyle(drawerRefs.formattedFormatButton, showEnhanced && !!enhancedDoc);
 
     const hasFormatOps = !!formatOps && formatOps.length > 0;
-    const formatDisabled = !sourceDoc || !sourceHash;
+    const formatDisabled = sourceUnavailable || !sourceDoc || !sourceHash;
     drawerRefs.formatSpinner.style.display = formattingState === "formatting" ? "inline-block" : "none";
     drawerRefs.formatLabel.textContent =
       formattingState === "formatting" ? "排版中" : hasFormatOps ? "重新排版" : "智能排版";
@@ -2015,14 +1903,17 @@ export const initDrawer = () => {
     drawerRefs.formatButton.style.cursor =
       formattingState === "formatting" ? "progress" : formatDisabled ? "not-allowed" : "pointer";
     drawerRefs.formatButton.disabled = formattingState !== "formatting" && formatDisabled;
+    drawerRefs.removeFormatButton.style.display =
+      hasFormatOps && formattingState !== "formatting" ? "inline-block" : "none";
+    setButtonDisabled(drawerRefs.removeFormatButton, sourceUnavailable);
 
     // 智能配图：base = 当前 base doc 排版后的结果
     const hasIllustrations = !!illustrations && illustrations.length > 0;
-    const illustrateDisabled = !sourceDoc || !sourceHash;
+    const illustrateDisabled = sourceUnavailable || !sourceDoc || !sourceHash;
     drawerRefs.illustrateSpinner.style.display =
       illustrationState === "illustrating" ? "inline-block" : "none";
     drawerRefs.illustrateLabel.textContent =
-      illustrationState === "illustrating" ? "配图中" : hasIllustrations ? "重新配图" : "智能配图";
+      illustrationState === "illustrating" ? "取消配图" : hasIllustrations ? "重新配图" : "智能配图";
     drawerRefs.illustrateButton.title =
       illustrationState === "illustrating"
         ? "点击取消智能配图"
@@ -2035,11 +1926,14 @@ export const initDrawer = () => {
       illustrationState === "illustrating" ? "progress" : illustrateDisabled ? "not-allowed" : "pointer";
     drawerRefs.illustrateButton.disabled =
       illustrationState !== "illustrating" && illustrateDisabled;
+    drawerRefs.removeIllustrationButton.style.display =
+      hasIllustrations && illustrationState !== "illustrating" ? "inline-block" : "none";
+    setButtonDisabled(drawerRefs.removeIllustrationButton, sourceUnavailable);
 
     const hasActiveContent =
       getCurrentHtml().trim().length > 0 || getCurrentMarkdown().trim().length > 0;
-    setButtonDisabled(drawerRefs.copyAllButton, !hasActiveContent);
-    setButtonDisabled(drawerRefs.copyMarkdownButton, !hasActiveContent);
+    setButtonDisabled(drawerRefs.copyAllButton, sourceUnavailable || !hasActiveContent);
+    setButtonDisabled(drawerRefs.copyMarkdownButton, sourceUnavailable || !hasActiveContent);
 
     updateStatus();
   };
@@ -2196,6 +2090,8 @@ export const initDrawer = () => {
     }
 
     if (state.status === "success" && state.operations) {
+      if (discardedFormattingSources.has(state.sourceHash) && state.jobId !== formattingJobId) return;
+      discardedFormattingSources.delete(state.sourceHash);
       await setFormatOps(base, baseMode, state.operations, {
         statusMessage: "已恢复后台排版结果"
       });
@@ -2236,6 +2132,7 @@ export const initDrawer = () => {
       }
       const baseMode: PreviewContentMode =
         enhancedBaseMode === "translated" && translatedDoc ? "translated" : "original";
+      discardedFormattingSources.delete(hashDoc(base));
       void setFormatOps(base, baseMode, message.operations, { statusMessage: "智能排版完成" });
       return;
     }
@@ -2313,10 +2210,14 @@ export const initDrawer = () => {
     const baseMode: PreviewContentMode =
       contentMode === "translated" && translatedDoc ? "translated" : "original";
 
-    const restored = await maybeRestoreCachedFormatting(base, baseMode);
-    if (restored) {
-      syncControlState();
-      return;
+    // 缓存仅用于"首次点击智能排版"时避免重复调用 API；已有排版结果时点击的是"重新排版"，
+    // 必须走一次新请求，否则永远只会把同一份缓存结果原样刷一遍，按钮等于失效。
+    if (!formatOps) {
+      const restored = await maybeRestoreCachedFormatting(base, baseMode);
+      if (restored) {
+        syncControlState();
+        return;
+      }
     }
 
     const port = ensureFormattingPort();
@@ -2338,6 +2239,36 @@ export const initDrawer = () => {
         settings: buildEffectiveFormattingSettings()
       }
     });
+  };
+
+  // 清空当前排版结果（不影响配图），并清掉对应缓存，方便用户之后手动重新触发"智能排版"拿到全新结果
+  const clearFormatting = async (showMessage = true) => {
+    if (!formatOps) return;
+    const base = enhancedBaseDoc();
+    if (base) {
+      const hash = hashDoc(base);
+      try {
+        ensureFormattingPort().postMessage({ type: "formatting/discard-result", sourceHash: hash });
+      } catch {
+        setStatusMessage("清空排版失败，请刷新页面后重试", "error");
+        return;
+      }
+      // Ignore a stale query response that was already in transit when the user cleared it.
+      discardedFormattingSources.add(hash);
+    }
+    formatOps = null;
+    formattingState = "idle";
+    formattingJobId = "";
+    setFormattingStatus("");
+    rebuildRenderedContent();
+    syncControlState();
+    if (showMessage) {
+      setStatusMessage("已清空排版，可重新点击智能排版", "info");
+    }
+    if (base && chrome.storage.session) {
+      const key = getFormattingCacheKey(base);
+      await chrome.storage.session.remove(key).catch(() => undefined);
+    }
   };
 
   // === 智能配图编排（配图锚定 base 块索引，与排版可叠加且顺序无关） ===
@@ -2410,6 +2341,36 @@ export const initDrawer = () => {
     return true;
   };
 
+  // 已生成配图后，用户不想要了：从增强稿里移除配图（排版结果保留），并清掉对应缓存，
+  // 避免下次点「智能配图」时又从 session 缓存里把刚移除的配图原样恢复回来。
+  const removeIllustrations = async (showMessage = true) => {
+    if (!illustrations) return;
+    const base = enhancedBaseDoc();
+    if (base) {
+      const hash = hashDoc(base);
+      try {
+        ensureIllustrationPort().postMessage({ type: "illustration/discard-result", sourceHash: hash });
+      } catch {
+        setStatusMessage("移除配图失败，请刷新页面后重试", "error");
+        return;
+      }
+      discardedIllustrationSources.add(hash);
+    }
+    illustrations = null;
+    illustrationState = "idle";
+    illustrationJobId = "";
+    setIllustrationStatus("");
+    rebuildRenderedContent();
+    syncControlState();
+    if (showMessage) {
+      setStatusMessage("已移除配图", "info");
+    }
+    if (base && chrome.storage.session) {
+      const key = getIllustrationCacheKey(base);
+      await chrome.storage.session.remove(key).catch(() => undefined);
+    }
+  };
+
   const cancelActiveIllustration = (showMessage = true) => {
     if (illustrationState !== "illustrating" || !illustrationJobId) return;
     const port = illustrationPort ?? ensureIllustrationPort();
@@ -2457,6 +2418,8 @@ export const initDrawer = () => {
     }
 
     if (state.status === "success" && state.items) {
+      if (discardedIllustrationSources.has(state.sourceHash) && state.jobId !== illustrationJobId) return;
+      discardedIllustrationSources.delete(state.sourceHash);
       await setIllustrationItems(base, baseMode, state.items, {
         statusMessage: "已恢复后台配图结果"
       });
@@ -2514,6 +2477,7 @@ export const initDrawer = () => {
         requested > message.items.length
           ? `智能配图完成：成功 ${message.items.length}/${requested} 张（部分生成失败）`
           : `智能配图完成：${message.items.length} 张`;
+      discardedIllustrationSources.delete(hashDoc(base));
       void setIllustrationItems(base, baseMode, message.items, { statusMessage });
       return;
     }
@@ -3006,18 +2970,21 @@ export const initDrawer = () => {
     }
   };
 
-  const refreshSource = async (options?: {
+  const refreshSourceOnce = async (options?: {
     announce?: boolean;
     activateCachedTranslation?: boolean;
   }) => {
     const announce = options?.announce ?? false;
     const activateCachedTranslation = options?.activateCachedTranslation ?? false;
+    const nextSourcePageKey = getPageKey();
 
     await loadSettings();
 
     const nextSourceDoc = await extractDoc();
+    if (getPageKey() !== nextSourcePageKey) {
+      throw new Error("读取期间页面已切换，请在当前页面重新刷新");
+    }
     const nextSourceHash = hashDoc(nextSourceDoc);
-    const nextSourcePageKey = getPageKey();
     const previousSourceHash = sourceHash;
     const previousSourcePageKey = sourcePageKey;
     const pageChanged = Boolean(previousSourcePageKey) && previousSourcePageKey !== nextSourcePageKey;
@@ -3091,6 +3058,24 @@ export const initDrawer = () => {
     }
   };
 
+  const refreshSource = (options?: Parameters<typeof refreshSourceOnce>[0]): Promise<void> => {
+    if (refreshPromise) return refreshPromise;
+    setStatusMessage("正在读取完整文章，请稍候…", "info");
+    refreshPromise = refreshSourceOnce(options)
+      .catch((error: unknown) => {
+        const reason = error instanceof Error ? error.message : "请稍后重试";
+        setStatusMessage(`读取文章失败：${reason}${sourceDoc ? "（已保留上次预览）" : ""}`, "error");
+      })
+      .finally(() => {
+        refreshPromise = null;
+        // Initial loads do not announce refresh success, but must clear the busy message.
+        if (statusMessage === "正在读取完整文章，请稍候…") setStatusMessage("已读取完整文章", "success");
+        syncControlState();
+      });
+    syncControlState();
+    return refreshPromise;
+  };
+
   const closeDrawer = () => {
     if (!drawer || closing) return;
 
@@ -3159,6 +3144,9 @@ export const initDrawer = () => {
     THEME_PRESETS.forEach((preset) => {
       const item = document.createElement("div");
       item.textContent = preset.label;
+      item.title = preset.description ?? preset.label;
+      item.style.borderLeft = `3px solid ${preset.colors.link ?? DEFAULT_COLORS.link}`;
+      item.style.marginBottom = "4px";
       item.style.padding = "10px 12px";
       item.style.fontSize = "13px";
       item.style.borderRadius = "10px";
@@ -3233,12 +3221,20 @@ export const initDrawer = () => {
       void startTranslation();
     });
 
+    drawerRefs.removeFormatButton.addEventListener("click", () => {
+      void clearFormatting();
+    });
+
     drawerRefs.formatButton.addEventListener("click", () => {
       void startFormatting();
     });
 
     drawerRefs.illustrateButton.addEventListener("click", () => {
       void startIllustration();
+    });
+
+    drawerRefs.removeIllustrationButton.addEventListener("click", () => {
+      void removeIllustrations();
     });
 
     drawerRefs.originalFormatButton.addEventListener("click", () => {

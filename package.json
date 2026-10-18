@@ -1,11 +1,14 @@
 {
   "name": "notion-wechat-ios",
-  "version": "1.0",
+  "version": "1.2.1",
   "private": true,
   "type": "module",
   "scripts": {
     "build": "esbuild src/background.ts src/content.ts src/feishu-bridge.ts --bundle --outdir=dist --target=chrome114 --format=esm --loader:.md=text",
     "dev": "esbuild src/background.ts src/content.ts src/feishu-bridge.ts --bundle --outdir=dist --target=chrome114 --format=esm --loader:.md=text --watch",
+    "test": "node scripts/test.mjs",
+    "test:layout": "node scripts/test.mjs layout",
+    "test:coverage": "node scripts/test.mjs --coverage",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {

@@ -19,6 +19,19 @@ type BackgroundFormattingJob = {
 
 const formattingJobs = new Map<number, BackgroundFormattingJob>();
 const formattingSubscribers = new Map<number, Set<chrome.runtime.Port>>();
+const stateQueues = new Map<number, Promise<void>>();
+
+// Serialize only state/storage work, never the long-running model request.
+// A query following discard must wait for removal, including after a worker restart.
+const withStateQueue = <T>(tabId: number, action: () => Promise<T> | T): Promise<T> => {
+  const result = (stateQueues.get(tabId) ?? Promise.resolve()).then(action);
+  const settled = result.then(() => {}, () => {});
+  stateQueues.set(tabId, settled);
+  void settled.then(() => {
+    if (stateQueues.get(tabId) === settled) stateQueues.delete(tabId);
+  });
+  return result;
+};
 
 const getStorageKey = (tabId: number) => `${FORMATTING_JOB_STATE_PREFIX}:${tabId}`;
 
@@ -87,26 +100,39 @@ const getJobState = async (tabId: number): Promise<FormattingBackgroundState | n
 const isCurrentJob = (tabId: number, jobId: string): boolean =>
   getJob(tabId)?.request.jobId === jobId;
 
-const updateJobState = async (
+const updateJobState = (
   tabId: number,
   jobId: string,
-  state: FormattingBackgroundState
-): Promise<boolean> => {
+  state: FormattingBackgroundState,
+  message: FormattingPortServerMessage
+): Promise<boolean> => withStateQueue(tabId, async () => {
   const job = getJob(tabId);
   if (!job || job.request.jobId !== jobId) return false;
   job.state = state;
   await persistJobState(tabId, state);
+  broadcast(tabId, message);
   return true;
-};
+});
 
-const clearJob = async (tabId: number, jobId?: string) => {
+const clearJob = (tabId: number, jobId?: string) => withStateQueue(tabId, async () => {
   const job = getJob(tabId);
   if (job && jobId && job.request.jobId !== jobId) return;
   if (job) {
+    job.controller.abort();
     formattingJobs.delete(tabId);
   }
   await persistJobState(tabId, null);
-};
+});
+
+const discardResult = (tabId: number, sourceHash: string, jobId?: string) =>
+  withStateQueue(tabId, async () => {
+    const state = getJob(tabId)?.state ?? await readPersistedJobState(tabId);
+    if (state?.status !== "success" || state.sourceHash !== sourceHash ||
+        (jobId !== undefined && state.jobId !== jobId)) return;
+    await persistJobState(tabId, null);
+    formattingJobs.delete(tabId);
+    broadcast(tabId, { type: "formatting/state", state: null });
+  });
 
 const abortJob = (tabId: number, jobId?: string) => {
   const job = getJob(tabId);
@@ -133,17 +159,18 @@ const runFormattingJob = async (tabId: number, request: FormattingJobRequest) =>
     state: createProgressState(request, { step: "prepare", label: "步骤 1/3：分析文档结构" })
   };
 
-  formattingJobs.set(tabId, job);
-  await persistJobState(tabId, job.state);
+  await withStateQueue(tabId, async () => {
+    abortJob(tabId);
+    formattingJobs.set(tabId, job);
+    await persistJobState(tabId, job.state);
+  });
+  if (!isCurrentJob(tabId, request.jobId) || controller.signal.aborted) return;
 
   const publishProgress = async (
     progress: Omit<FormattingBackgroundState, "jobId" | "sourceHash" | "status">
   ) => {
     const nextState = createProgressState(request, progress);
-    const updated = await updateJobState(tabId, request.jobId, nextState);
-    if (!updated) return false;
-
-    broadcast(tabId, {
+    return updateJobState(tabId, request.jobId, nextState, {
       type: "formatting/progress",
       jobId: request.jobId,
       step: progress.step ?? "prepare",
@@ -152,7 +179,6 @@ const runFormattingJob = async (tabId: number, request: FormattingJobRequest) =>
       completed: progress.completed,
       total: progress.total
     });
-    return true;
   };
 
   const publishResult = async (operations: FormattingOperation[]) => {
@@ -162,11 +188,8 @@ const runFormattingJob = async (tabId: number, request: FormattingJobRequest) =>
       status: "success",
       operations
     };
-    const updated = await updateJobState(tabId, request.jobId, nextState);
-    if (!updated) return false;
-
-    broadcast(tabId, { type: "formatting/result", jobId: request.jobId, operations });
-    return true;
+    return updateJobState(tabId, request.jobId, nextState,
+      { type: "formatting/result", jobId: request.jobId, operations });
   };
 
   const publishError = async (message: string) => {
@@ -176,11 +199,8 @@ const runFormattingJob = async (tabId: number, request: FormattingJobRequest) =>
       status: "error",
       message
     };
-    const updated = await updateJobState(tabId, request.jobId, nextState);
-    if (!updated) return false;
-
-    broadcast(tabId, { type: "formatting/error", jobId: request.jobId, message });
-    return true;
+    return updateJobState(tabId, request.jobId, nextState,
+      { type: "formatting/error", jobId: request.jobId, message });
   };
 
   try {
@@ -252,20 +272,26 @@ export const setupFormattingBackground = () => {
       const payload = message as FormattingPortClientMessage;
 
       if (payload.type === "formatting/query-state") {
-        void getJobState(tabId).then((state) => {
+        void withStateQueue(tabId, async () => {
+          const state = await getJobState(tabId);
           postMessageSafe(port, { type: "formatting/state", state });
-        });
+        }).catch((error) => console.warn("Failed to read formatting state", error));
+        return;
+      }
+
+      if (payload.type === "formatting/discard-result") {
+        void discardResult(tabId, payload.sourceHash, payload.jobId)
+          .catch((error) => console.warn("Failed to discard formatting result", error));
         return;
       }
 
       if (payload.type === "formatting/cancel") {
-        abortJob(tabId, payload.jobId);
+        void withStateQueue(tabId, () => abortJob(tabId, payload.jobId));
         return;
       }
 
       if (payload.type !== "formatting/start") return;
 
-      abortJob(tabId);
       void runFormattingJob(tabId, payload.payload);
     });
 
@@ -275,7 +301,6 @@ export const setupFormattingBackground = () => {
   });
 
   chrome.tabs.onRemoved.addListener((tabId) => {
-    abortJob(tabId);
     void clearJob(tabId);
     formattingSubscribers.delete(tabId);
   });

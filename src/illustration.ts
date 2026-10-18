@@ -43,6 +43,7 @@ export type IllustrationJobRequest = {
 export type IllustrationPortClientMessage =
   | { type: "illustration/start"; payload: IllustrationJobRequest }
   | { type: "illustration/cancel"; jobId: string }
+  | { type: "illustration/discard-result"; sourceHash: string; jobId?: string }
   | { type: "illustration/query-state" };
 
 export type IllustrationBackgroundState = {

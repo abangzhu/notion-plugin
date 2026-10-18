@@ -14,7 +14,7 @@ const chunkSummaries = (
   let currentLength = 0;
 
   inputs.forEach((input) => {
-    const nextLength = currentLength + input.text.length;
+    const nextLength = currentLength + JSON.stringify(input).length;
     const overUnits = current.length >= settings.chunkMaxUnits;
     const overChars = nextLength >= settings.chunkThreshold;
     const prev = current[current.length - 1];
@@ -28,7 +28,7 @@ const chunkSummaries = (
     }
 
     current.push(input);
-    currentLength += input.text.length;
+    currentLength += JSON.stringify(input).length;
   });
 
   if (current.length > 0) chunks.push(current);
@@ -71,8 +71,8 @@ export const planFormatting = async (params: {
       throw new Error(`分块 ${index + 1}/${chunks.length} 失败：${detail}`);
     }
 
-    operations.push(...(payload.operations ?? []));
+    operations.push(...normalizeFormattingOperations(payload?.operations, chunk));
   }
 
-  return normalizeFormattingOperations(operations);
+  return normalizeFormattingOperations(operations, params.inputs);
 };

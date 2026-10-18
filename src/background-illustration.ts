@@ -35,6 +35,18 @@ type BackgroundIllustrationJob = {
 
 const illustrationJobs = new Map<number, BackgroundIllustrationJob>();
 const illustrationSubscribers = new Map<number, Set<chrome.runtime.Port>>();
+const stateQueues = new Map<number, Promise<void>>();
+
+// Keep state queries, result removal and writes ordered without blocking image generation.
+const withStateQueue = <T>(tabId: number, action: () => Promise<T> | T): Promise<T> => {
+  const result = (stateQueues.get(tabId) ?? Promise.resolve()).then(action);
+  const settled = result.then(() => {}, () => {});
+  stateQueues.set(tabId, settled);
+  void settled.then(() => {
+    if (stateQueues.get(tabId) === settled) stateQueues.delete(tabId);
+  });
+  return result;
+};
 
 const getStorageKey = (tabId: number) => `${ILLUSTRATION_JOB_STATE_PREFIX}:${tabId}`;
 
@@ -109,26 +121,39 @@ const getJobState = async (tabId: number): Promise<IllustrationBackgroundState |
 const isCurrentJob = (tabId: number, jobId: string): boolean =>
   getJob(tabId)?.request.jobId === jobId;
 
-const updateJobState = async (
+const updateJobState = (
   tabId: number,
   jobId: string,
-  state: IllustrationBackgroundState
-): Promise<boolean> => {
+  state: IllustrationBackgroundState,
+  message: IllustrationPortServerMessage
+): Promise<boolean> => withStateQueue(tabId, async () => {
   const job = getJob(tabId);
   if (!job || job.request.jobId !== jobId) return false;
   job.state = state;
   await persistJobState(tabId, state);
+  broadcast(tabId, message);
   return true;
-};
+});
 
-const clearJob = async (tabId: number, jobId?: string) => {
+const clearJob = (tabId: number, jobId?: string) => withStateQueue(tabId, async () => {
   const job = getJob(tabId);
   if (job && jobId && job.request.jobId !== jobId) return;
   if (job) {
+    job.controller.abort();
     illustrationJobs.delete(tabId);
   }
   await persistJobState(tabId, null);
-};
+});
+
+const discardResult = (tabId: number, sourceHash: string, jobId?: string) =>
+  withStateQueue(tabId, async () => {
+    const state = getJob(tabId)?.state ?? await readPersistedJobState(tabId);
+    if (state?.status !== "success" || state.sourceHash !== sourceHash ||
+        (jobId !== undefined && state.jobId !== jobId)) return;
+    await persistJobState(tabId, null);
+    illustrationJobs.delete(tabId);
+    broadcast(tabId, { type: "illustration/state", state: null });
+  });
 
 const abortJob = (tabId: number, jobId?: string) => {
   const job = getJob(tabId);
@@ -155,17 +180,18 @@ const runIllustrationJob = async (tabId: number, request: IllustrationJobRequest
     state: createProgressState(request, { step: "prepare", label: "步骤 1/3：分析配图位置" })
   };
 
-  illustrationJobs.set(tabId, job);
-  await persistJobState(tabId, job.state);
+  await withStateQueue(tabId, async () => {
+    abortJob(tabId);
+    illustrationJobs.set(tabId, job);
+    await persistJobState(tabId, job.state);
+  });
+  if (!isCurrentJob(tabId, request.jobId) || controller.signal.aborted) return;
 
   const publishProgress = async (
     progress: Omit<IllustrationBackgroundState, "jobId" | "sourceHash" | "status">
   ) => {
     const nextState = createProgressState(request, progress);
-    const updated = await updateJobState(tabId, request.jobId, nextState);
-    if (!updated) return false;
-
-    broadcast(tabId, {
+    return updateJobState(tabId, request.jobId, nextState, {
       type: "illustration/progress",
       jobId: request.jobId,
       step: progress.step ?? "prepare",
@@ -174,7 +200,6 @@ const runIllustrationJob = async (tabId: number, request: IllustrationJobRequest
       completed: progress.completed,
       total: progress.total
     });
-    return true;
   };
 
   const publishResult = async (items: IllustrationItem[], requested: number) => {
@@ -185,11 +210,8 @@ const runIllustrationJob = async (tabId: number, request: IllustrationJobRequest
       items,
       requested
     };
-    const updated = await updateJobState(tabId, request.jobId, nextState);
-    if (!updated) return false;
-
-    broadcast(tabId, { type: "illustration/result", jobId: request.jobId, items, requested });
-    return true;
+    return updateJobState(tabId, request.jobId, nextState,
+      { type: "illustration/result", jobId: request.jobId, items, requested });
   };
 
   const publishError = async (message: string) => {
@@ -199,11 +221,8 @@ const runIllustrationJob = async (tabId: number, request: IllustrationJobRequest
       status: "error",
       message
     };
-    const updated = await updateJobState(tabId, request.jobId, nextState);
-    if (!updated) return false;
-
-    broadcast(tabId, { type: "illustration/error", jobId: request.jobId, message });
-    return true;
+    return updateJobState(tabId, request.jobId, nextState,
+      { type: "illustration/error", jobId: request.jobId, message });
   };
 
   const stopKeepAlive = startKeepAlive();
@@ -299,20 +318,26 @@ export const setupIllustrationBackground = () => {
       const payload = message as IllustrationPortClientMessage;
 
       if (payload.type === "illustration/query-state") {
-        void getJobState(tabId).then((state) => {
+        void withStateQueue(tabId, async () => {
+          const state = await getJobState(tabId);
           postMessageSafe(port, { type: "illustration/state", state });
-        });
+        }).catch((error) => console.warn("Failed to read illustration state", error));
+        return;
+      }
+
+      if (payload.type === "illustration/discard-result") {
+        void discardResult(tabId, payload.sourceHash, payload.jobId)
+          .catch((error) => console.warn("Failed to discard illustration result", error));
         return;
       }
 
       if (payload.type === "illustration/cancel") {
-        abortJob(tabId, payload.jobId);
+        void withStateQueue(tabId, () => abortJob(tabId, payload.jobId));
         return;
       }
 
       if (payload.type !== "illustration/start") return;
 
-      abortJob(tabId);
       void runIllustrationJob(tabId, payload.payload);
     });
 
@@ -322,7 +347,6 @@ export const setupIllustrationBackground = () => {
   });
 
   chrome.tabs.onRemoved.addListener((tabId) => {
-    abortJob(tabId);
     void clearJob(tabId);
     illustrationSubscribers.delete(tabId);
   });

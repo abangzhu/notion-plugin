@@ -7,14 +7,16 @@
 - 一键复制为公众号格式（图片自动转为 Base64 内嵌，粘贴到微信编辑器可直接显示）
 - 一键复制为 Markdown 格式
 - AI一键翻译当前 Notion 页面内容（支持中英文互译）
+- AI 智能排版：段内强调、重点卡片、引用与步骤列表；支持重新排版和清空排版
+- AI 智能配图：支持取消生成、移除已生成配图，并保留当前排版
 - 支持 `Quick` / `Normal` 两种 AI 翻译模式
 - 支持 `原文 / 译文` 预览切换
 - 支持 `公众号 / Markdown` 两种预览格式切换
 - 翻译完成后，当前预览内容可继续复制为公众号格式或 Markdown
-- 顶部设置面板支持配置 OpenAI API Key、ChatGPT 系列模型、目标语言、目标读者、风格预设、术语表等
+- 顶部设置面板支持配置 API Key、OpenAI / LiteLLM 等兼容接口地址、语言模型、图片模型、目标语言、目标读者、风格预设、术语表等
 - 模型列表来自 [`src/translation-models.json`](./src/translation-models.json)，可自行扩展
 - 翻译提示词模板位于 `src/prompts/`，开发者可直接调整 prompt 文案与翻译约束
-- 支持 9 套主题：`默认主题`、`Notion 白`、`抹茶计划`、`学院档案`、`Bento OS`、`活力橙`、`海蓝色`、`科技黑`、`魔力红`
+- 支持 14 套主题：`苹果白`、`包豪斯`、`瑞士网格`、`暖纸`、`雾蓝`、`默认主题`、`Notion 白`、`抹茶计划`、`学院档案`、`Bento OS`、`活力橙`、`海蓝色`、`科技黑`、`魔力红`
 - 支持字体切换与字号缩放
 - 支持链接引用自动编号（文内 `[n]` + 文末参考资料）
 - 右侧抽屉实时预览
@@ -29,6 +31,12 @@
 - 加载过程中状态栏会显示进度（如 `图片加载中 2/5`）
 - 加载失败的图片会保留原始 URL 并提示失败数量
 - 切换页面或刷新时自动重新加载
+
+## Notion 长文章提取
+
+Notion 长文章会按阅读位置挂载部分正文。扩展从顶部逐屏扫描，按 `data-block-id` 去重并按文章顺序累积内容，再恢复原阅读位置。打开抽屉或刷新时可能短暂看到页面滚动；提取范围不应取决于打开抽屉时停留的位置。
+
+遇到缺段时，先确认 Chrome 加载的是当前开发目录，并在重新加载扩展后刷新 Notion 页面。具体检查步骤见[版本整合与验收记录](./docs/version-consolidation.md)。
 
 ## 飞书文档支持
 
@@ -54,7 +62,7 @@
 ## 翻译能力
 
 - 翻译服务基于 OpenAI 官方 SDK
-- 目前支持 OpenAI 官方接口
+- 支持 OpenAI 官方接口及 LiteLLM 等 OpenAI 兼容网关；可单独配置语言模型与图片模型
 - 支持目标语言切换：`中文 / English`
 - 支持目标读者选择：`通用读者 / 技术读者 / 学术读者 / 商业读者`
 - 支持风格预设选择：`叙事感 / 正式 / 技术 / 直译 / 学术 / 商业 / 幽默 / 口语化 / 优雅`
@@ -67,6 +75,7 @@
 首次使用翻译功能时，请先在设置面板配置：
 
 - `API Key`
+- `API 地址`（可选，留空使用 OpenAI 官方接口）
 - `模型`
 - `目标语言`
 - `翻译模式`
@@ -93,22 +102,29 @@ npm run build
 ```
 
 3. 在 Chrome 加载扩展
+
 - 打开 `chrome://extensions`
 - 打开 `Developer mode`
 - 点击 `Load unpacked`
-- 选择本项目目录
+- 本机统一选择 `/Users/andrewwong/dev/ClaudeCode/Notion-Plugin`；其他机器选择自己的项目目录
+- 本机只保留这一份扩展启用，`/Users/andrewwong/Documents/ClaudeCode/Notion-Plugin` 保留为旧副本，不再加载或迭代
+- 每次重新构建后，先在扩展管理页点击重新加载，再刷新已打开的 Notion / 飞书页面
 
 4. 使用
-- 打开 Notion（`https://www.notion.so/*`）或飞书（`https://*.feishu.cn/docx/*`、`https://*.feishu.cn/wiki/*`）页面
+
+- 打开 Notion（`https://www.notion.so/*`、`https://app.notion.com/*`）或飞书（`https://*.feishu.cn/docx/*`、`https://*.feishu.cn/wiki/*`）页面
 - 点击扩展图标打开右侧抽屉
 - 选择主题 / 字体 / 字号
 - 按需点击：
   - `复制为公众号格式`
   - `复制为 Markdown`
   - `翻译`
+  - `智能排版`
+  - `智能配图`
   - `设置`
 
 5. 使用翻译
+
 - 点击右上角 `设置`
 - 填写 OpenAI `API Key`
 - 选择模型和翻译参数
@@ -117,14 +133,21 @@ npm run build
 
 ## 开发命令
 
+本机后续开发统一在 `/Users/andrewwong/dev/ClaudeCode/Notion-Plugin` 进行。当前整合版本为 `1.2.1`，本地版本与远端状态分别见[整合记录](./docs/version-consolidation.md)。
+
 ```bash
-npm run dev
-npm run typecheck
-npm run build
+npm run dev            # 监听源码变化并构建
+npm test               # 全部回归测试
+npm run test:layout    # 智能排版规则测试
+npm run test:coverage  # 测试 bundle 覆盖率
+npm run typecheck      # TypeScript 类型检查
+npm run build          # 生产构建
 ```
+
+测试入口为 `scripts/test.mjs`，使用已有 esbuild 将 TypeScript 测试编译到临时目录，再交给 Node 内置测试运行器执行，无需新增测试依赖。覆盖率统计对象是编译后的 bundle，不能直接视为源码或整个产品的覆盖率。
 
 ## 说明
 
-- 支持 Notion 网页端（`https://www.notion.so/*`）和飞书文档（`https://*.feishu.cn/docx/*`、`https://*.feishu.cn/wiki/*`）。
-- 翻译能力当前基于 OpenAI 官方接口。
+- 支持 Notion 网页端（包括 `https://www.notion.so/*`、`https://app.notion.com/*`）和飞书文档（`https://*.feishu.cn/docx/*`、`https://*.feishu.cn/wiki/*`）。
+- 翻译及配图通过配置的 OpenAI 或兼容接口执行。
 - Notion / 飞书 DOM 结构变更时，个别 block 提取规则可能需要更新。

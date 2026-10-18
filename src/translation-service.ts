@@ -64,13 +64,6 @@ const isRetryableError = (error: unknown): boolean => {
   return RETRYABLE_ERROR_PATTERNS.some((pattern) => normalizedMessage.includes(pattern));
 };
 
-// 部分模型（gpt-5.5、Claude via Bedrock 等）不接受自定义 temperature。
-// 错误措辞因 provider 而异："unsupported"（OpenAI）或 "deprecated"（Bedrock/Claude）。
-const isTemperatureUnsupportedError = (error: unknown): boolean => {
-  const message = getErrorMessage(error).toLowerCase();
-  return message.includes("temperature") && (message.includes("unsupported") || message.includes("deprecated"));
-};
-
 type TranslationErrorCategory =
   | "auth"
   | "rate_limit"
@@ -177,7 +170,6 @@ export const callResponsesApi = async <T>(params: {
   signal: AbortSignal;
 }): Promise<T> => {
   const client = createOpenAIClient(params.settings);
-  let omitTemperature = false;
 
   for (let attempt = 1; attempt <= OPENAI_REQUEST_MAX_ATTEMPTS; attempt += 1) {
     let timedOut = false;
@@ -201,8 +193,7 @@ export const callResponsesApi = async <T>(params: {
       const response = await client.responses.create(
         {
           model: params.settings.model,
-          input: params.input,
-          ...(omitTemperature ? {} : { temperature: 0.2 })
+          input: params.input
         },
         {
           signal: requestController.signal
@@ -218,13 +209,6 @@ export const callResponsesApi = async <T>(params: {
     } catch (error) {
       if (params.signal.aborted) {
         throw error;
-      }
-
-      // 模型拒绝自定义 temperature：去掉该参数后立即重试（不消耗常规重试预算）
-      if (!omitTemperature && isTemperatureUnsupportedError(error)) {
-        omitTemperature = true;
-        attempt -= 1;
-        continue;
       }
 
       const shouldRetry =

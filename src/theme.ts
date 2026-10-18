@@ -45,6 +45,7 @@ export type HeadingStyleScale = {
 
 // 与 themeId 无关的风格 token：把"颜色/字号之外的风格决策"集中为配置
 export type StyleTokens = {
+  minimal?: boolean; // restrained surfaces for modern article themes
   radiusSm: string; // 行内 code 等小元素圆角
   radiusMd: string; // callout / 代码块 / 图片圆角
   codeMargin: string; // 代码块上下外边距（统一左右对齐）
@@ -64,13 +65,11 @@ export type RenderOptions = {
 };
 
 export const FONT_STACK_DEFAULT =
-  "Optima-Regular, Optima, PingFangSC-light, PingFangTC-light, 'PingFang SC', Cambria, Cochin, Georgia, Times, 'Times New Roman', serif";
-
+  "-apple-system, BlinkMacSystemFont, 'Helvetica Neue', 'PingFang SC', 'Microsoft YaHei', Arial, sans-serif";
 export const FONT_STACK_PINGFANG =
-  "PingFangSC-light, PingFangTC-light, 'PingFang SC', Optima-Regular, Optima, Cambria, Cochin, Georgia, Times, 'Times New Roman', serif";
-
+  "'PingFang SC', 'PingFang TC', -apple-system, 'Microsoft YaHei', sans-serif";
 export const FONT_STACK_HELVETICA =
-  "Helvetica, 'Helvetica Neue', Optima-Regular, Optima, PingFangSC-light, PingFangTC-light, 'PingFang SC', Cambria, Cochin, Georgia, Times, 'Times New Roman', serif";
+  "'Helvetica Neue', Helvetica, Arial, 'PingFang SC', sans-serif";
 
 export const DEFAULT_COLORS: ThemeColors = {
   text: "#222",
@@ -83,12 +82,12 @@ export const DEFAULT_COLORS: ThemeColors = {
 };
 
 export const DEFAULT_TYPO: Typography = {
-  bodySize: "15px",
-  bodyLineHeight: "26px",
-  bodyMarginBottom: "10px",
+  bodySize: "16px",
+  bodyLineHeight: "1.8",
+  bodyMarginBottom: "18px",
   headingWeight: "600",
   bodyWeight: "400",
-  letterSpacing: "0.02em"
+  letterSpacing: "0.01em"
 };
 
 // 默认风格 token —— 复刻 default 主题现状（heading 字号/边距来自旧 renderer 逻辑）
@@ -187,6 +186,7 @@ const CODE_COLORS_LIGHT: CodeHighlightColors = {
 };
 
 export const getCodeHighlightColors = (themeId?: string): CodeHighlightColors =>
+  ["apple", "bauhaus", "swiss", "paper", "mist"].includes(themeId ?? "") ||
   themeId === "red" ||
   themeId === "notion" ||
   themeId === "matcha" ||
@@ -195,32 +195,62 @@ export const getCodeHighlightColors = (themeId?: string): CodeHighlightColors =>
     ? CODE_COLORS_LIGHT
     : CODE_COLORS_DARK;
 
+// 行高统一 >=1.5：低于此值粗体大字标题在多行换行时容易出现视觉重叠（微信排版检测也会对此报警）
+const MODERN_HEADINGS: HeadingStyleScale = {
+  h1: { decoration: "none", scale: 1.9, lineHeight: "1.5", marginTopEm: 2.5, marginBottomEm: 1.1, weight: "700" },
+  h2: { decoration: "none", scale: 1.4, lineHeight: "1.5", marginTopEm: 2.2, marginBottomEm: 0.8, weight: "600" },
+  h3: { decoration: "none", scale: 1.13, lineHeight: "1.5", marginTopEm: 1.6, marginBottomEm: 0.6, weight: "600" }
+};
+const MODERN_STYLE: Partial<StyleTokens> = {
+  minimal: true, radiusSm: "4px", radiusMd: "12px", codeMargin: "24px 0",
+  showTitleHeader: true, quoteVariant: "default", accentOnBold: false, headings: MODERN_HEADINGS
+};
+
 // 各主题对默认 token 的覆盖。
 // - notion/matcha/academia/bento 的 heading 保留各自 renderer 分支（不在此配置 headings）。
 // - red/blue/black/sspai 的 heading 改造为标准 underline/sidebar/居中风格，由此驱动。
 export const STYLE_TOKENS_BY_THEME: Record<string, Partial<StyleTokens>> = {
+  apple: MODERN_STYLE,
+  bauhaus: { ...MODERN_STYLE, radiusMd: "0", headings: {
+    ...MODERN_HEADINGS,
+    h1: { ...MODERN_HEADINGS.h1, decoration: "sidebar", accentColorKey: "link" },
+    h2: { ...MODERN_HEADINGS.h2, decoration: "sidebar", weight: "700" }
+  } },
+  swiss: { ...MODERN_STYLE, radiusMd: "0", headings: {
+    ...MODERN_HEADINGS,
+    h1: { ...MODERN_HEADINGS.h1, scale: 2.1, decoration: "underline", accentColorKey: "border" },
+    h2: { ...MODERN_HEADINGS.h2, decoration: "underline", accentColorKey: "border", weight: "700" }
+  } },
+  paper: { ...MODERN_STYLE, radiusMd: "2px", headings: {
+    ...MODERN_HEADINGS, h1: { ...MODERN_HEADINGS.h1, weight: "600", colorKey: "link" },
+    h2: { ...MODERN_HEADINGS.h2, colorKey: "link" }
+  } },
+  mist: { ...MODERN_STYLE, radiusMd: "8px", headings: {
+    ...MODERN_HEADINGS, h1: { ...MODERN_HEADINGS.h1, colorKey: "link" },
+    h2: { ...MODERN_HEADINGS.h2, colorKey: "link" }
+  } },
   notion: { calloutBg: "#f1f0ec" },
   academia: { showTitleHeader: true },
   bento: { showTitleHeader: true },
   red: {
     quoteVariant: "card",
     headings: {
-      h1: { decoration: "underline", scale: 1.6, lineHeight: "1.5", marginTopEm: 0, marginBottomEm: 2.6, weight: "700", align: "center", fitContent: true, colorKey: "link", accentColorKey: "link" },
+      h1: { decoration: "underline", scale: 1.6, lineHeight: "1.5", marginTopEm: 0, marginBottomEm: 2.6, weight: "700", fitContent: true, colorKey: "link", accentColorKey: "link" },
       h2: { decoration: "sidebar", scale: 1.33, lineHeight: "1.5", marginTopEm: 2.4, marginBottomEm: 1.2, weight: "700", accentColorKey: "link" },
       h3: { decoration: "sidebar", scale: 1.13, lineHeight: "1.5", marginTopEm: 2.0, marginBottomEm: 1.0, weight: "700", accentColorKey: "link" }
     }
   },
   blue: {
     headings: {
-      h1: { decoration: "underline", scale: 1.6, lineHeight: "1.5", marginTopEm: 0, marginBottomEm: 2.6, weight: "700", align: "center", fitContent: true, colorKey: "link", accentColorKey: "link" },
+      h1: { decoration: "underline", scale: 1.6, lineHeight: "1.5", marginTopEm: 0, marginBottomEm: 2.6, weight: "700", fitContent: true, colorKey: "link", accentColorKey: "link" },
       h2: { decoration: "sidebar", scale: 1.33, lineHeight: "1.5", marginTopEm: 2.4, marginBottomEm: 1.2, weight: "700", accentColorKey: "link" },
       h3: { decoration: "sidebar", scale: 1.13, lineHeight: "1.5", marginTopEm: 2.0, marginBottomEm: 1.0, weight: "700", accentColorKey: "link" }
     }
   },
   black: {
     headings: {
-      h1: { decoration: "underline", scale: 1.6, lineHeight: "1.5", marginTopEm: 0, marginBottomEm: 2.6, weight: "700", align: "center", fitContent: true, colorKey: "text", accentColorKey: "link" },
-      h2: { decoration: "none", scale: 1.33, lineHeight: "1.5", marginTopEm: 2.4, marginBottomEm: 1.2, weight: "700", align: "center", fitContent: true, colorKey: "text" },
+      h1: { decoration: "underline", scale: 1.6, lineHeight: "1.5", marginTopEm: 0, marginBottomEm: 2.6, weight: "700", fitContent: true, colorKey: "text", accentColorKey: "link" },
+      h2: { decoration: "none", scale: 1.33, lineHeight: "1.5", marginTopEm: 2.4, marginBottomEm: 1.2, weight: "700", fitContent: true, colorKey: "text" },
       h3: { decoration: "sidebar", scale: 1.13, lineHeight: "1.5", marginTopEm: 2.0, marginBottomEm: 1.0, weight: "700", colorKey: "text", accentColorKey: "link" }
     }
   },
