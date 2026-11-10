@@ -8,18 +8,33 @@ export type ThemePreset = {
   typography?: Partial<Typography>;
 };
 
+// 现代主题：每套都有独立的结构语言（见 theme-skins.ts），不只是换色
 export const MODERN_THEME_PRESETS: ThemePreset[] = [
-  { id: "apple", label: "苹果白", description: "大留白 · 清晰字阶 · 轻盈圆角",
-    colors: { text: "#1d1d1f", subText: "#6e6e73", link: "#0066cc", border: "#d2d2d7", divider: "#e5e5ea", codeBg: "#f5f5f7", inlineCodeBg: "#eeeef0" } },
-  { id: "bauhaus", label: "包豪斯", description: "几何竖线 · 黑红对比 · 利落直角",
-    colors: { text: "#202020", subText: "#68635f", link: "#b43224", border: "#b43224", divider: "#e7e2da", codeBg: "#f7f4ee", inlineCodeBg: "#eee9df" }, typography: { headingWeight: "700", letterSpacing: "0" } },
-  { id: "swiss", label: "瑞士网格", description: "大字标题 · 细线分区 · 黑白秩序",
-    colors: { text: "#171717", subText: "#666666", link: "#333333", border: "#a3a3a3", divider: "#dedede", codeBg: "#f5f5f5", inlineCodeBg: "#ebebeb" }, typography: { headingWeight: "700", letterSpacing: "0" } },
-  { id: "paper", label: "暖纸", description: "暖灰棕色 · 舒展行距 · 细腻质感",
-    colors: { text: "#39342e", subText: "#766b5e", link: "#88613d", border: "#d5c9b7", divider: "#e9e1d5", codeBg: "#f8f4ed", inlineCodeBg: "#eee7db" }, typography: { bodyLineHeight: "1.9" } },
-  { id: "mist", label: "雾蓝", description: "冷蓝层级 · 柔和底色 · 技术与长文",
-    colors: { text: "#243746", subText: "#607584", link: "#326589", border: "#c4d5e0", divider: "#e0e9ef", codeBg: "#f2f6f9", inlineCodeBg: "#e5edf3" } }
+  { id: "apple", label: "简约白", description: "细线标题 · 圆角浅灰卡片 · 点状分隔，克制耐看",
+    colors: { text: "#1d1d1f", subText: "#6e6e73", link: "#0071e3", border: "#d2d2d7", divider: "#e5e5ea", codeBg: "#f5f5f7", inlineCodeBg: "#eeeef0" } },
+  { id: "magazine", label: "杂志", description: "衬线标题 · 大号章节序号 · 装饰分隔，适合深度长文",
+    colors: { text: "#1f1f1f", subText: "#6b6460", link: "#a8322d", border: "#d9cfc7", divider: "#e8e2dc", codeBg: "#f7f4f1", inlineCodeBg: "#efe9e3" },
+    typography: { bodyLineHeight: "1.85", letterSpacing: "0.02em" } },
+  { id: "tech", label: "极客蓝", description: "胶囊标题 · # 小标题 · 深色代码窗，适合技术教程",
+    colors: { text: "#1f2937", subText: "#6b7280", link: "#2563eb", border: "#bfdbfe", divider: "#e5e7eb", codeBg: "#f3f6fb", inlineCodeBg: "#e8eefb" },
+    typography: { letterSpacing: "0.01em" } },
+  { id: "paper", label: "暖纸文艺", description: "居中衬线标题 · 框线引用 · 相框图片，适合随笔书评",
+    colors: { text: "#3b342c", subText: "#7a6e60", link: "#9c6b3f", border: "#d8c8b2", divider: "#e9dfd0", codeBg: "#f8f3ea", inlineCodeBg: "#efe6d8" },
+    typography: { bodyLineHeight: "1.95", letterSpacing: "0.03em" } },
+  { id: "vivid", label: "荧光笔", description: "荧光笔标题与重点 · 圆润卡片，活泼醒目",
+    colors: { text: "#2b2b2b", subText: "#737373", link: "#ea580c", border: "#fed7aa", divider: "#f1e4d8", codeBg: "#fff7ed", inlineCodeBg: "#ffedd5" },
+    typography: { letterSpacing: "0.02em" } },
+  { id: "mist", label: "雾蓝", description: "整行色块标题 · 竖条小标题 · 柔和底色，适合报告周报",
+    colors: { text: "#243746", subText: "#607584", link: "#2f6f8f", border: "#c4d5e0", divider: "#e0e9ef", codeBg: "#f2f6f9", inlineCodeBg: "#e5edf3" } },
+  { id: "bauhaus", label: "包豪斯", description: "实色方块序号 · 粗竖条 · 直角，几何感强",
+    colors: { text: "#202020", subText: "#68635f", link: "#c0392b", border: "#bdb6ad", divider: "#e7e2da", codeBg: "#f7f4ee", inlineCodeBg: "#eee9df" },
+    typography: { headingWeight: "700", letterSpacing: "0" } },
+  { id: "swiss", label: "瑞士网格", description: "粗顶线分区 · 序号大字标题 · 黑白配一点红",
+    colors: { text: "#111111", subText: "#5f5f5f", link: "#d62828", border: "#bdbdbd", divider: "#dedede", codeBg: "#f5f5f5", inlineCodeBg: "#ebebeb" },
+    typography: { headingWeight: "700", letterSpacing: "0" } }
 ];
+
+export const MODERN_THEME_IDS = new Set(MODERN_THEME_PRESETS.map((preset) => preset.id));
 
 export const THEME_PRESETS: ThemePreset[] = [
   ...MODERN_THEME_PRESETS,

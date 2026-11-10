@@ -44,14 +44,18 @@ Notion DOM → extractor → Doc → renderer → HTML/Markdown
 ```
 
 1. **`extractor.ts`** — Parses Notion's DOM into a structured `Doc` (defined in `types.ts`). Handles headings, paragraphs, lists, tables, images, code blocks, callouts, quotes, and inline formatting
-2. **`renderer.ts`** — Converts `Doc` to WeChat-optimized HTML (inline styles, link reference numbering) or Markdown. Implements 14 theme presets with custom typography; preserve WeChat text-leaf wrappers and safe line heights when changing styles
+2. **`renderer.ts`** — Converts `Doc` to WeChat-optimized HTML (inline styles, link reference numbering) or Markdown. Implements 17 theme presets with custom typography and delegates the 8 modern themes to `renderer-skin.ts`; preserve WeChat text-leaf wrappers and safe line heights when changing styles
 3. **`translation.ts`** — Orchestration layer: serializes Doc to XML for translation, parses translated XML back, applies translations to document structure. Also handles language detection and document hashing for cache invalidation
 4. **`translation-service.ts`** — OpenAI API client with retry logic (2 attempts, 90s timeout), document chunking for large docs, and two-phase flow (analysis → translation in Normal mode)
 
 ### Supporting Files
 
 - **`types.ts`** — `Doc`/`Block`/`Inline` discriminated union types (the core data model)
-- **`theme.ts` / `theme-presets.ts`** — Style tokens, font stacks, and 14 theme presets (5 modern + 9 legacy)
+- **`theme.ts` / `theme-presets.ts`** — Style tokens, font stacks, and 17 theme presets (8 modern + 9 legacy)
+- **`theme-skins.ts` / `renderer-skin.ts`** — Structural "skins" for modern themes (heading, quote, callout, divider, table, image, code and step variants). Only WeChat-safe inline styles: no flex, box-shadow, SVG or positioning
+- **`render-helpers.ts`** — Shared inline rendering (escaping, leaf wrappers, strong/link styles, body paragraph style)
+- **`persistent-cache.ts`** — `chrome.storage.local` result cache (translation / formatting / illustration) with an index, TTL and per-kind entry limits, so results survive extension reloads
+- **`preferences.ts`** — Persisted preview preferences (theme, font, font scale)
 - **`virtual-scroll.ts`** — Ordered accumulation of virtualized Notion blocks with original scroll-position restoration
 - **`translation-config.ts`** — Model config, target language options, audience/style presets
 - **`translation-models.json`** — Available translation models (loaded at build time)

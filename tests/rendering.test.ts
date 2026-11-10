@@ -2,9 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { renderDocToHtml, renderDocToMarkdown } from "../src/renderer";
-import { THEME_PRESETS } from "../src/theme-presets";
+import { MODERN_THEME_PRESETS, THEME_PRESETS } from "../src/theme-presets";
 import { mergeRenderOptions } from "../src/theme";
 import type { Doc, Inline } from "../src/types";
+
+const MODERN_IDS = MODERN_THEME_PRESETS.map((theme) => theme.id);
 
 const optionsFor = (themeId: string, bodySize = "16px") => {
   const preset = THEME_PRESETS.find((theme) => theme.id === themeId)!;
@@ -38,7 +40,7 @@ test("article titles stay above chapter headings without changing Markdown headi
     { type: "heading", level: 2, children: [{ type: "text", content: "章节标题" }] },
     { type: "heading", level: 3, children: [{ type: "text", content: "子章节标题" }] }
   ] };
-  for (const themeId of ["apple", "bauhaus", "swiss", "paper", "mist"]) {
+  for (const themeId of MODERN_IDS) {
     const html = renderDocToHtml(doc, optionsFor(themeId));
     const headings = [...html.matchAll(/<h([123]) style="([^"]*)">([\s\S]*?)<\/h\1>/g)];
     assert.equal(headings.length, 3, themeId);
@@ -70,7 +72,7 @@ test("Notion body-only H2 chapters are not promoted to oversized article titles"
     { type: "heading", level: 3, children: [{ type: "text", content: "小节" }] },
     { type: "heading", level: 2, children: [{ type: "text", content: "章节二" }] }
   ] };
-  for (const themeId of ["apple", "bauhaus", "swiss", "paper", "mist"]) {
+  for (const themeId of MODERN_IDS) {
     const html = renderDocToHtml(doc, optionsFor(themeId));
     assert.doesNotMatch(html, /<h1/);
     assert.equal([...html.matchAll(/<h2[^>]*font-size:22px;/g)].length, 2);
@@ -105,7 +107,7 @@ test("all themes keep mixed inline text in WeChat leaf nodes across every text b
       assert.ok(container[2].startsWith('<span leaf="">'), `${theme.id}: ${container[0]}`);
       assert.ok(container[2].endsWith("</span>"), `${theme.id}: ${container[0]}`);
     }
-    if (["apple", "bauhaus", "swiss", "paper", "mist"].includes(theme.id)) {
+    if (MODERN_IDS.includes(theme.id)) {
       const card = renderDocToHtml({ blocks: [doc.blocks[3]] }, optionsFor(theme.id));
       assert.match(card, /^<blockquote/);
       assert.doesNotMatch(html, /<svg|box-shadow|display:flex/);

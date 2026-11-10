@@ -79,13 +79,19 @@ export type IllustrationPortServerMessage =
     }
   | { type: "illustration/error"; jobId: string; message: string };
 
+// 配图风格提示词默认值（英文效果最佳）；拼在内置极简风基底之后，用户留空时回退到它
+export const DEFAULT_ILLUSTRATION_STYLE_PROMPT =
+  "editorial magazine illustration, soft gradient lighting, " +
+  "subtle paper grain texture, harmonious palette of two or three colors, " +
+  "one clear focal subject, modern and calm mood";
+
 export const DEFAULT_ILLUSTRATION_SETTINGS: IllustrationSettings = {
   apiKey: "",
   baseURL: "",
   planningModel: DEFAULT_TRANSLATION_MODEL,
   model: DEFAULT_IMAGE_MODEL,
   maxImages: 4,
-  stylePrompt: ""
+  stylePrompt: DEFAULT_ILLUSTRATION_STYLE_PROMPT
 };
 
 export const normalizeIllustrationSettings = (
@@ -111,7 +117,8 @@ export const normalizeIllustrationSettings = (
       return isKnownImageModel || looksLikeImageModel ? stored : DEFAULT_IMAGE_MODEL;
     })(),
     maxImages,
-    stylePrompt: String(merged.stylePrompt ?? "").trim()
+    // 留空即使用默认风格（旧版本存的空字符串也会迁移到默认值）
+    stylePrompt: String(merged.stylePrompt ?? "").trim() || DEFAULT_ILLUSTRATION_STYLE_PROMPT
   };
 };
 

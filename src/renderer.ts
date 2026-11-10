@@ -2,28 +2,20 @@ import { mergeRenderOptions } from "./theme";
 import type { RenderOptions } from "./theme";
 import type { Block, Doc, Inline, ListBlock, ListItem, TableBlock } from "./types";
 import type { ImageMap } from "./image-loader";
+import {
+  buildBodyParagraphStyle,
+  escapeHtml,
+  inlinesToHtml,
+  inlinesToLeafHtml,
+  normalizeHref,
+  wrapLeaf
+} from "./render-helpers";
+import { renderSkinBlock, renderSkinTitle } from "./renderer-skin";
 
 type ReferenceItem = {
   href: string;
   text: string;
 };
-
-const escapeHtml = (input: string): string =>
-  input
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/\"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-
-const sanitizeCssColor = (value: string): string => {
-  const trimmed = value.trim();
-  if (/^#[0-9a-fA-F]{3,8}$/.test(trimmed)) return trimmed;
-  if (/^rgba?\(\s*\d+\s*,\s*\d+\s*,\s*\d+\s*(,\s*[\d.]+\s*)?\)$/i.test(trimmed)) return trimmed;
-  return "yellow";
-};
-
-const normalizeHref = (href: string): string => href.trim();
 
 const hostnameOf = (href: string): string => {
   try {
@@ -123,74 +115,24 @@ const buildHeadingLevelMap = (doc: Doc, firstLevel: HeadingLevel = 1): Map<Headi
 const effectiveHeadingLevel = (level: HeadingLevel, map: Map<HeadingLevel, HeadingLevel>): HeadingLevel =>
   map.get(level) ?? level;
 
-const inlineToHtml = (
-  inline: Inline,
-  options: RenderOptions,
-  indexMap?: Map<string, number>
-): string => {
-  const isPineapple = options.themeId === "red";
-  const isBlue = options.themeId === "blue";
-  const isBlack = options.themeId === "black";
-  const isSspai = options.themeId === "sspai";
-  const isMatcha = options.themeId === "matcha";
-  const isAcademia = options.themeId === "academia";
-  const isBento = options.themeId === "bento";
-  const isAccentTheme = isPineapple || isBlue || isSspai || isMatcha || isBento;
-  const inlineAccent = "color" in inline && inline.color === "accent";
-  switch (inline.type) {
-    case "text":
-      return inlineAccent
-        ? `<span style="color:${options.colors.link};">${escapeHtml(inline.content)}</span>`
-        : escapeHtml(inline.content);
-    case "bold": {
-      // 加粗默认仅 font-weight，不整体染强调色；只有 Notion 真彩色文本或主题显式开启时才染色
-      const boldAccent = inlineAccent || options.style.accentOnBold;
-      return `<strong style="font-weight:600;${boldAccent ? `overflow-wrap:anywhere;color:${options.colors.link};` : ""}">${escapeHtml(
-        inline.content
-      )}</strong>`;
-    }
-    case "italic":
-      return `<em style="font-style:italic;${inlineAccent ? `color:${options.colors.link};` : ""}">${escapeHtml(
-        inline.content
-      )}</em>`;
-    case "strikethrough":
-      return `<del style="text-decoration:line-through;${inlineAccent ? `color:${options.colors.link};` : ""}">${escapeHtml(inline.content)}</del>`;
-    case "underline":
-      return `<span style="text-decoration:underline;${inlineAccent ? `color:${options.colors.link};` : ""}">${escapeHtml(inline.content)}</span>`;
-    case "highlight":
-      return `<mark style="background:${sanitizeCssColor(inline.highlightColor)};padding:2px 0;">${escapeHtml(inline.content)}</mark>`;
-    case "code":
-      return `<code style="font-family:Menlo, Monaco, Consolas, monospace;background:${options.colors.inlineCodeBg};overflow-wrap:anywhere;padding:2px 4px;border-radius:4px;font-size:0.95em;">${escapeHtml(inline.content)}</code>`;
-    case "link":
-      const href = normalizeHref(inline.href);
-      const index = indexMap?.get(href);
-      const sup = index ? `<sup style="font-size:0.8em;">[${index}]</sup>` : "";
-      return `<a href="${escapeHtml(href)}" style="overflow-wrap:anywhere;color:${options.colors.link};${isAccentTheme || isBlack || isAcademia ? "text-decoration:none;border-bottom:1px solid " + options.colors.link + ";" : "text-decoration:underline;"}">${escapeHtml(
-        inline.content
-      )}${sup}</a>`;
-    default:
-      return "";
-  }
+// 章节自动序号（01 / 02 …）：仅当章节标题 ≥2 个且作者没有自带编号时启用，避免出现"01 一、标题"
+const AUTHOR_NUMBERED = /^\s*(?:第[一二三四五六七八九十百\d]+[章节部分篇讲]|(?:\d{1,2}|[一二三四五六七八九十]+)[.、．:：)）\s]|part\s*\d|step\s*\d)/i;
+
+export const buildChapterNumbers = (
+  doc: Doc,
+  headingLevelMap: Map<HeadingLevel, HeadingLevel>
+): Map<Block, number> => {
+  const chapters = doc.blocks.filter(
+    (block): block is Extract<Block, { type: "heading" }> =>
+      block.type === "heading" && effectiveHeadingLevel(block.level, headingLevelMap) === 2
+  );
+  if (chapters.length < 2) return new Map();
+  const numbered = chapters.some((block) =>
+    AUTHOR_NUMBERED.test(block.children.map((child) => child.content).join(""))
+  );
+  if (numbered) return new Map();
+  return new Map(chapters.map((block, index) => [block as Block, index + 1]));
 };
-
-const inlinesToHtml = (
-  inlines: Inline[],
-  options: RenderOptions,
-  indexMap?: Map<string, number>
-): string => inlines.map((inline) => inlineToHtml(inline, options, indexMap)).join("");
-
-// 微信编辑器把 span[leaf] 作为文字叶子节点。统一包裹富文本内容可以避免
-// line-height 校验器把同一行里的 strong/span/code 片段误算成多行。
-const wrapLeaf = (html: string): string => `<span leaf="">${html}</span>`;
-
-const inlinesToLeafHtml = (
-  inlines: Inline[],
-  options: RenderOptions,
-  indexMap?: Map<string, number>
-): string => wrapLeaf(inlinesToHtml(inlines, options, indexMap));
-
-const buildBodyParagraphStyle = (options: RenderOptions, color?: string): string =>
-  `font-family:${options.fontStack};font-size:${options.typography.bodySize};line-height:${options.typography.bodyLineHeight};margin:0 0 ${options.typography.bodyMarginBottom};color:${color ?? options.colors.text};font-weight:${options.typography.bodyWeight};${options.typography.letterSpacing ? `letter-spacing:${options.typography.letterSpacing};` : ""}text-align:left;overflow-wrap:break-word;white-space:pre-line;min-height:20px;padding-left:0em;`;
 
 // 由 StyleTokens.headings 驱动的标题渲染，覆盖 default / red / blue / black / sspai。
 // notion/matcha/academia/bento 的标题在 blockToHtml 内有各自分支，不经此函数。
@@ -250,7 +192,6 @@ const quoteCardHtml = (
   const inner = inlinesToHtml(block.children, options, indexMap) || "<br/>";
   const baseSize = Number.parseFloat(options.typography.bodySize) || 16;
   const bg = options.style.calloutBg ?? options.colors.codeBg;
-  if (options.style.minimal) return `<blockquote style="overflow-wrap:break-word;margin:28px 0;padding:4px 0 4px 18px;border-left:2px solid ${options.colors.link};font-family:${options.fontStack};font-size:${baseSize + 1}px;line-height:1.75;font-weight:500;color:${options.colors.text};white-space:pre-line;">${wrapLeaf(inner)}</blockquote>`;
   return `<section style="margin:24px 0;padding:22px 20px;background:${bg};border-radius:${options.style.radiusMd};text-align:left;font-family:${options.fontStack};"><p style="overflow-wrap:break-word;font-size:${Math.round(
     baseSize * 2.4
   )}px;line-height:1.2;color:${options.colors.link};margin:0 0 6px;"><span leaf="">&ldquo;</span></p><p style="overflow-wrap:break-word;margin:0;font-size:${Math.round(
@@ -293,8 +234,9 @@ const listToHtml = (
     options.themeId === "matcha" ||
     options.themeId === "bento";
   const itemTextColor = !list.ordered && isAccentTheme ? options.colors.text : options.colors.text;
-  const extraStyle =
-    options.themeId === "bento"
+  const extraStyle = options.style.skin
+    ? `margin:16px 0;padding-left:1.5em;${options.style.skin.listAccent ? `color:${options.colors.link};` : ""}`
+    : options.themeId === "bento"
       ? `margin:14px 0;padding-left:1.75em;border-left:3px solid ${options.colors.divider};`
       : options.themeId === "matcha"
         ? `margin:14px 0;padding-left:1.65em;color:${options.colors.link};`
@@ -361,8 +303,21 @@ const blockToHtml = (
   options: RenderOptions,
   indexMap?: Map<string, number>,
   imageMap?: ImageMap,
-  headingLevelMap?: Map<HeadingLevel, HeadingLevel>
+  headingLevelMap?: Map<HeadingLevel, HeadingLevel>,
+  chapterNumbers?: Map<Block, number>
 ): string => {
+  const skin = options.style.skin;
+  if (skin) {
+    const headingLevel =
+      block.type === "heading" && headingLevelMap ? effectiveHeadingLevel(block.level, headingLevelMap) : undefined;
+    const skinned = renderSkinBlock(block, options, skin, {
+      indexMap,
+      imageMap,
+      headingLevel,
+      chapterNumber: chapterNumbers?.get(block)
+    });
+    if (skinned !== null) return skinned;
+  }
   const baseSize = Number.parseFloat(options.typography.bodySize) || 16;
   const h1Size = Math.round(baseSize * 1.6);
   const h2Size = Math.round(baseSize * 1.33);
@@ -468,7 +423,6 @@ const blockToHtml = (
     case "quote":
       if (block.variant === "card" || options.style.quoteVariant === "card")
         return quoteCardHtml(block, options, indexMap);
-      if (options.style.minimal) return `<blockquote style="overflow-wrap:break-word;font-family:${options.fontStack};font-size:${options.typography.bodySize};line-height:${options.typography.bodyLineHeight};margin:24px 0;padding:0 0 0 16px;border-left:2px solid ${options.colors.border};color:${options.colors.subText};white-space:pre-line;">${inlinesToLeafHtml(block.children, options, indexMap)}</blockquote>`;
       if (isNotion) {
         return `<blockquote style="overflow-wrap:break-word;font-family:${options.fontStack};border-left:3px solid ${options.colors.border};padding:2px 0 2px 14px;margin:18px 0;color:${options.colors.subText};line-height:${options.typography.bodyLineHeight};font-size:${options.typography.bodySize};">${inlinesToLeafHtml(
           block.children,
@@ -519,7 +473,6 @@ const blockToHtml = (
     case "callout": {
       const icon = escapeHtml((block.icon || "💡").trim() || "💡");
       const inner = inlinesToHtml(block.children, options, indexMap) || "<br/>";
-      if (options.style.minimal) return `<section style="margin:24px 0;padding:18px 20px;background:${options.style.calloutBg ?? options.colors.codeBg};border-radius:${options.style.radiusMd};font-family:${options.fontStack};font-size:${options.typography.bodySize};line-height:${options.typography.bodyLineHeight};color:${options.colors.text};white-space:pre-line;"><p style="overflow-wrap:break-word;margin:0;"><span leaf="">${block.icon ? `<span style="margin-right:8px;">${icon}</span>` : ""}${inner}</span></p></section>`;
       if (isNotion) {
         return `<section style="margin:16px 0;padding:12px 14px;background:${options.style.calloutBg ?? options.colors.codeBg};border-radius:6px;color:${options.colors.text};font-family:${options.fontStack};line-height:${options.typography.bodyLineHeight};font-size:${options.typography.bodySize};${options.typography.letterSpacing ? `letter-spacing:${options.typography.letterSpacing};` : ""}"><p style="overflow-wrap:break-word;margin:0;"><span leaf=""><strong style="margin-right:8px;">${icon}</strong>${inner}</span></p></section>`;
       }
@@ -541,7 +494,6 @@ const blockToHtml = (
       return `<section style="margin:16px 0;padding:10px 12px;background:${options.style.calloutBg ?? options.colors.codeBg};border-left:3px solid ${options.colors.border};border-radius:4px;color:${options.colors.text};font-family:${options.fontStack};line-height:${options.typography.bodyLineHeight};font-size:${options.typography.bodySize};${options.typography.letterSpacing ? `letter-spacing:${options.typography.letterSpacing};` : ""}"><p style="overflow-wrap:break-word;margin:0;"><span leaf=""><strong style="margin-right:6px;color:${isAccentTheme ? options.colors.link : options.colors.text};">${icon}</strong>${inner}</span></p></section>`;
     }
     case "divider":
-      if (options.style.minimal) return `<hr style="border:0;border-top:1px solid ${options.colors.divider};margin:32px 0;" />`;
       if (isNotion || isMatcha || isAcademia || isBento) {
         const dividerMargin = isBento ? "22px 0" : isAcademia ? "24px 0" : "20px 0";
         const dividerColor = isAcademia ? options.colors.border : options.colors.divider;
@@ -552,7 +504,7 @@ const blockToHtml = (
         : `<hr style="border:none;border-top:1px solid ${options.colors.divider};margin:16px 0;" />`;
     case "image": {
       const imgSrc = imageMap?.get(block.src) ?? block.src;
-      const imageRadius = options.style.minimal ? options.style.radiusMd : isAcademia ? "0" : isBento ? "8px" : "6px";
+      const imageRadius = isAcademia ? "0" : isBento ? "8px" : "6px";
       const imageMargin = isBento || isAcademia ? "22px 0" : "16px 0";
       const imageBorder =
         isAcademia || isBento || isMatcha ? `border:1px solid ${options.colors.divider};` : "";
@@ -561,23 +513,22 @@ const blockToHtml = (
     case "code": {
       const langLabel = block.language ?? "";
       const codeSize = Math.max(13, Math.round(baseSize * 0.9));
-      const minimal = options.style.minimal;
       const macDots = `<span style="display:flex;padding:10px 14px 0px;"><svg xmlns="http://www.w3.org/2000/svg" version="1.1" x="0px" y="0px" width="45px" height="13px" viewBox="0 0 450 130" role="img" aria-label="code-window"><ellipse cx="50" cy="65" rx="50" ry="52" stroke="rgb(220,60,54)" stroke-width="2" fill="rgb(237,108,96)"></ellipse><ellipse cx="225" cy="65" rx="50" ry="52" stroke="rgb(218,151,33)" stroke-width="2" fill="rgb(247,193,81)"></ellipse><ellipse cx="400" cy="65" rx="50" ry="52" stroke="rgb(27,161,37)" stroke-width="2" fill="rgb(100,200,86)"></ellipse></svg></span>`;
       const langAttr = langLabel ? ` data-language-pending="${escapeHtml(langLabel)}"` : "";
       const codeTextColor = isPineapple
         ? "#333"
-        : minimal || isNotion || isMatcha || isBento
+        : isNotion || isMatcha || isBento
           ? "#24292f"
           : isAcademia
             ? "#4f3f30"
             : "rgb(201,209,217)";
       const codeBackground = isPineapple
         ? "#fafafa"
-        : minimal || isNotion || isMatcha || isAcademia || isBento
+        : isNotion || isMatcha || isAcademia || isBento
           ? options.colors.codeBg
           : "rgb(13,17,23)";
       const codeBorder =
-        minimal || isPineapple || isNotion || isMatcha || isAcademia || isBento
+        isPineapple || isNotion || isMatcha || isAcademia || isBento
           ? `border:1px solid ${isPineapple ? "#f0f0f0" : options.colors.divider};`
           : "";
       const codeShadow = isPineapple ? "box-shadow:0 2px 10px rgba(0,0,0,0.3);" : "";
@@ -585,7 +536,7 @@ const blockToHtml = (
 
       // 公众号会把语法高亮产生的多个 span 误识别为多行文本。代码块复制时采用
       // 单一文字叶子节点，并用 pre-wrap 保留缩进与换行，兼顾移动端窄屏阅读。
-      return `<section style="color:${codeTextColor};background:${codeBackground};font-size:${codeSize}px;border-radius:${minimal ? options.style.radiusMd : isAcademia ? "0" : "8px"};line-height:1.65;margin:${options.style.codeMargin};padding:0;${codeBorder}${codeShadow}">${minimal ? "" : macDots}<code${langAttr} style="font-size:inherit;line-height:inherit;border-radius:4px;display:block;padding:${minimal ? "18px" : "0.5em 1em 1em"};overflow-wrap:anywhere;word-break:break-word;text-indent:0;color:inherit;background:none;white-space:pre-wrap;margin:0;font-family:Menlo, Monaco, Consolas, monospace;">${codeText}</code></section>`;
+      return `<section style="color:${codeTextColor};background:${codeBackground};font-size:${codeSize}px;border-radius:${isAcademia ? "0" : "8px"};line-height:1.65;margin:${options.style.codeMargin};padding:0;${codeBorder}${codeShadow}">${macDots}<code${langAttr} style="font-size:inherit;line-height:inherit;border-radius:4px;display:block;padding:0.5em 1em 1em;overflow-wrap:anywhere;word-break:break-word;text-indent:0;color:inherit;background:none;white-space:pre-wrap;margin:0;font-family:Menlo, Monaco, Consolas, monospace;">${codeText}</code></section>`;
     }
     case "emphasis": {
       const inner = inlinesToHtml(block.children, options, indexMap) || "<br/>";
@@ -594,17 +545,12 @@ const blockToHtml = (
       const ls = options.typography.letterSpacing
         ? `letter-spacing:${options.typography.letterSpacing};`
         : "";
-      if (options.style.minimal) return `<section style="margin:28px 0;padding:18px 20px;background:${bg};border-left:3px solid ${accent};border-radius:${options.style.radiusMd};font-family:${options.fontStack};font-size:${options.typography.bodySize};line-height:${options.typography.bodyLineHeight};color:${options.colors.text};white-space:pre-line;"><p style="overflow-wrap:break-word;margin:0;font-weight:600;">${wrapLeaf(inner)}</p></section>`;
       if (isMatcha) {
         return `<section style="margin:18px 0;padding:14px 16px;background:#eef7ec;border:1px solid ${options.colors.border};border-left:4px solid ${accent};border-radius:6px;font-family:${options.fontStack};font-size:${options.typography.bodySize};line-height:${options.typography.bodyLineHeight};color:${options.colors.text};${ls}"><p style="overflow-wrap:break-word;margin:0;font-weight:600;">${wrapLeaf(inner)}</p></section>`;
       }
       return `<section style="margin:18px 0;padding:14px 16px;background:${bg};border-left:4px solid ${accent};border-radius:${options.style.radiusMd};font-family:${options.fontStack};font-size:${options.typography.bodySize};line-height:${options.typography.bodyLineHeight};color:${options.colors.text};${ls}"><p style="overflow-wrap:break-word;margin:0;font-weight:600;">${wrapLeaf(inner)}</p></section>`;
     }
     case "steps": {
-      if (options.style.minimal) {
-        const tag = block.ordered ? "ol" : "ul";
-        return `<${tag} style="margin:20px 0;padding-left:1.5em;color:${options.colors.text};font-family:${options.fontStack};">${block.items.map((item) => `<li style="padding-left:4px;margin:0 0 12px;"><p style="${buildBodyParagraphStyle(options)}margin:0;">${inlinesToLeafHtml(item.children, options, indexMap)}</p></li>`).join("")}</${tag}>`;
-      }
       const accent = options.colors.link;
       const bg = options.style.calloutBg ?? options.colors.codeBg;
       const rows = block.items
@@ -673,10 +619,7 @@ const renderTitleBlock = (
   const titleBlock = getExistingTitleBlock(doc) ??
     { type: "heading" as const, level: 1 as const, children: [{ type: "text" as const, content: title }] };
   const baseSize = Number.parseFloat(options.typography.bodySize) || 16;
-  if (options.style.minimal) {
-    const heading = headingToHtml(titleBlock, options, indexMap, 1);
-    return heading.replace(/margin:[^;]+;/, `margin:0 0 ${Math.round(baseSize * 2)}px;`);
-  }
+  if (options.style.skin) return renderSkinTitle(titleBlock, options, options.style.skin, indexMap);
   const bar = `<p style="overflow-wrap:break-word;margin:0 0 12px;"><span style="display:inline-block;width:36px;height:3px;background:${options.colors.link};"></span></p>`;
   const heading = `<h1 style="overflow-wrap:break-word;font-family:${options.fontStack};font-size:${Math.round(
     baseSize * 1.9
@@ -699,10 +642,11 @@ export const renderDocToHtml = (
   // Notion exports may contain only body H2/H3 blocks (the page title is separate).
   // Keep those at chapter size instead of treating every chapter as an article title.
   const hasExplicitH1 = bodyDoc.blocks.some((block) => block.type === "heading" && block.level === 1);
-  const chapterSized = Boolean(titleHtml) || (options.style.minimal && !hasExplicitH1);
+  const chapterSized = Boolean(titleHtml) || (Boolean(options.style.skin) && !hasExplicitH1);
   const headingLevelMap = buildHeadingLevelMap(bodyDoc, chapterSized ? 2 : 1);
+  const chapterNumbers = options.style.skin ? buildChapterNumbers(bodyDoc, headingLevelMap) : undefined;
   const bodyHtml = bodyDoc.blocks
-    .map((block) => blockToHtml(block, options, indexMap, imageMap, headingLevelMap))
+    .map((block) => blockToHtml(block, options, indexMap, imageMap, headingLevelMap, chapterNumbers))
     .join("");
   const referencesHtml = renderReferencesSection(items, options, indexMap);
   return `${titleHtml}${bodyHtml}${referencesHtml}`;
