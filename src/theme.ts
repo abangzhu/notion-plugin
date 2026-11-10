@@ -1,3 +1,5 @@
+import { THEME_SKINS, type ThemeSkin } from "./theme-skins";
+
 export type ThemeColors = {
   text: string;
   subText: string;
@@ -45,7 +47,7 @@ export type HeadingStyleScale = {
 
 // 与 themeId 无关的风格 token：把"颜色/字号之外的风格决策"集中为配置
 export type StyleTokens = {
-  minimal?: boolean; // restrained surfaces for modern article themes
+  skin?: ThemeSkin; // 现代主题的结构皮肤（标题/引用/卡片/分隔线等变体），见 theme-skins.ts
   radiusSm: string; // 行内 code 等小元素圆角
   radiusMd: string; // callout / 代码块 / 图片圆角
   codeMargin: string; // 代码块上下外边距（统一左右对齐）
@@ -186,7 +188,7 @@ const CODE_COLORS_LIGHT: CodeHighlightColors = {
 };
 
 export const getCodeHighlightColors = (themeId?: string): CodeHighlightColors =>
-  ["apple", "bauhaus", "swiss", "paper", "mist"].includes(themeId ?? "") ||
+  THEME_SKINS[themeId ?? ""]?.code === "light" ||
   themeId === "red" ||
   themeId === "notion" ||
   themeId === "matcha" ||
@@ -202,33 +204,21 @@ const MODERN_HEADINGS: HeadingStyleScale = {
   h3: { decoration: "none", scale: 1.13, lineHeight: "1.5", marginTopEm: 1.6, marginBottomEm: 0.6, weight: "600" }
 };
 const MODERN_STYLE: Partial<StyleTokens> = {
-  minimal: true, radiusSm: "4px", radiusMd: "12px", codeMargin: "24px 0",
+  radiusSm: "4px", radiusMd: "12px", codeMargin: "24px 0",
   showTitleHeader: true, quoteVariant: "default", accentOnBold: false, headings: MODERN_HEADINGS
 };
 
+const skinned = (id: string): Partial<StyleTokens> => {
+  const skin = THEME_SKINS[id];
+  return { ...MODERN_STYLE, radiusMd: skin.radius, calloutBg: skin.tint, skin };
+};
+
 // 各主题对默认 token 的覆盖。
+// - 现代主题（apple/magazine/tech/paper/vivid/mist/bauhaus/swiss）由 skin 驱动，见 renderer-skin.ts。
 // - notion/matcha/academia/bento 的 heading 保留各自 renderer 分支（不在此配置 headings）。
 // - red/blue/black/sspai 的 heading 改造为标准 underline/sidebar/居中风格，由此驱动。
 export const STYLE_TOKENS_BY_THEME: Record<string, Partial<StyleTokens>> = {
-  apple: MODERN_STYLE,
-  bauhaus: { ...MODERN_STYLE, radiusMd: "0", headings: {
-    ...MODERN_HEADINGS,
-    h1: { ...MODERN_HEADINGS.h1, decoration: "sidebar", accentColorKey: "link" },
-    h2: { ...MODERN_HEADINGS.h2, decoration: "sidebar", weight: "700" }
-  } },
-  swiss: { ...MODERN_STYLE, radiusMd: "0", headings: {
-    ...MODERN_HEADINGS,
-    h1: { ...MODERN_HEADINGS.h1, scale: 2.1, decoration: "underline", accentColorKey: "border" },
-    h2: { ...MODERN_HEADINGS.h2, decoration: "underline", accentColorKey: "border", weight: "700" }
-  } },
-  paper: { ...MODERN_STYLE, radiusMd: "2px", headings: {
-    ...MODERN_HEADINGS, h1: { ...MODERN_HEADINGS.h1, weight: "600", colorKey: "link" },
-    h2: { ...MODERN_HEADINGS.h2, colorKey: "link" }
-  } },
-  mist: { ...MODERN_STYLE, radiusMd: "8px", headings: {
-    ...MODERN_HEADINGS, h1: { ...MODERN_HEADINGS.h1, colorKey: "link" },
-    h2: { ...MODERN_HEADINGS.h2, colorKey: "link" }
-  } },
+  ...Object.fromEntries(Object.keys(THEME_SKINS).map((id) => [id, skinned(id)])),
   notion: { calloutBg: "#f1f0ec" },
   academia: { showTitleHeader: true },
   bento: { showTitleHeader: true },

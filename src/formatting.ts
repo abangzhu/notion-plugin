@@ -80,12 +80,20 @@ export type FormattingPortServerMessage =
   | { type: "formatting/result"; jobId: string; operations: FormattingOperation[] }
   | { type: "formatting/error"; jobId: string; message: string };
 
+// 排版额外说明的默认值：用户留空时回退到它（设置面板会预填，可直接修改或一键恢复）
+export const DEFAULT_FORMATTING_INSTRUCTIONS = [
+  "面向手机端公众号读者，优先保证阅读节奏：每 3～5 段给读者一个视觉落点即可，不要堆砌卡片。",
+  "优先用段内强调标出核心结论、关键数字和可执行建议；只有独立成段的观点总结才转为重点卡片。",
+  "提示、注意事项、风险提醒用 Callout；明确的操作流程（第一步/然后/最后）合并为步骤卡。",
+  "金句卡只留给真正适合被截图转发的一句话，全文不超过 2 张。"
+].join("\n");
+
 export const DEFAULT_FORMATTING_SETTINGS: FormattingSettings = {
   apiKey: "",
   baseURL: "",
   model: DEFAULT_TRANSLATION_MODEL,
   aggressiveness: "balanced",
-  extraInstructions: "",
+  extraInstructions: DEFAULT_FORMATTING_INSTRUCTIONS,
   chunkThreshold: 12000,
   chunkMaxUnits: 60
 };
@@ -107,7 +115,8 @@ export const normalizeFormattingSettings = (
       String(merged.model ?? DEFAULT_FORMATTING_SETTINGS.model).trim() ||
       DEFAULT_FORMATTING_SETTINGS.model,
     aggressiveness,
-    extraInstructions: String(merged.extraInstructions ?? "").trim(),
+    // 留空即使用默认说明（旧版本存的空字符串也会迁移到默认值）
+    extraInstructions: String(merged.extraInstructions ?? "").trim() || DEFAULT_FORMATTING_INSTRUCTIONS,
     chunkThreshold: Number.isFinite(merged.chunkThreshold)
       ? Math.max(2000, Number(merged.chunkThreshold))
       : DEFAULT_FORMATTING_SETTINGS.chunkThreshold,

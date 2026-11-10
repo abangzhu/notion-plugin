@@ -1,5 +1,12 @@
-import { THEME_PRESETS, type ThemePreset } from "./theme-presets";
-import { writeClipboard } from "./clipboard";
+import { MODERN_THEME_IDS, THEME_PRESETS, type ThemePreset } from "./theme-presets";
+import {
+  normalizePreviewPreferences,
+  PREVIEW_PREFERENCES_KEY,
+  FONT_SCALE_MAX,
+  FONT_SCALE_MIN,
+  type PreviewPreferences
+} from "./preferences";
+import { copyPlainText, writeClipboard } from "./clipboard";
 import { extractDoc, getPageKey } from "./platform";
 import { renderDocToHtml, renderDocToMarkdown, renderDocToText } from "./renderer";
 import {
@@ -20,6 +27,7 @@ import {
   TRANSLATION_SETTINGS_KEY
 } from "./translation";
 import {
+  DEFAULT_FORMATTING_INSTRUCTIONS,
   DEFAULT_FORMATTING_SETTINGS,
   FORMATTING_PORT_NAME,
   FORMATTING_SETTINGS_KEY,
@@ -29,6 +37,7 @@ import {
 import {
   applyEnhancementsToDoc,
   DEFAULT_ILLUSTRATION_SETTINGS,
+  DEFAULT_ILLUSTRATION_STYLE_PROMPT,
   hashIllustration,
   ILLUSTRATION_PORT_NAME,
   ILLUSTRATION_SETTINGS_KEY,
@@ -74,6 +83,7 @@ import {
   type ImageMap
 } from "./image-loader";
 import { testApiConnection } from "./translation-service";
+import { createPersistentCache, type PersistentCache } from "./persistent-cache";
 import type { ApiTestResult } from "./translation-service";
 
 const DRAWER_ID = "__notion_wechat_drawer";
@@ -83,6 +93,9 @@ const DRAWER_MIN_WIDTH = 380;
 const DRAWER_DEFAULT_WIDTH = 686;
 const ACCENT = "#10b981";
 const TRANSLATION_CACHE_PREFIX = "translationCache";
+const RESULT_CACHE_TTL_MS = 14 * 24 * 60 * 60 * 1000;
+// 每类结果的保留上限；配图含 base64 PNG 体积大，单独限制条数
+const RESULT_CACHE_LIMITS = { translation: 40, formatting: 60, illustration: 12 } as const;
 const FORMATTING_CACHE_PREFIX = "formattingCache";
 const ILLUSTRATION_CACHE_PREFIX = "illustrationCache";
 
@@ -142,6 +155,8 @@ const COPY_ICON =
   '<svg aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="5" y="3" width="7" height="9" rx="1.6" stroke="#6b7280" stroke-width="1.2"/><path d="M4 5.2H3.6C2.72 5.2 2 5.92 2 6.8v5.6C2 13.28 2.72 14 3.6 14h4.8c.88 0 1.6-.72 1.6-1.6V12" stroke="#6b7280" stroke-width="1.2" stroke-linecap="round"/></svg>';
 const CHECK_ICON =
   '<svg aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M3.2 8.4 6.4 11.4 12.8 4.8" stroke="#10b981" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+const CROSS_ICON =
+  '<svg aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M4.5 4.5l7 7M11.5 4.5l-7 7" stroke="#dc2626" stroke-width="1.6" stroke-linecap="round"/></svg>';
 
 const createIconButton = (): HTMLButtonElement => {
   const button = createButton("", "ghost");
@@ -161,6 +176,23 @@ const setApiKeyToggleVisual = (button: HTMLButtonElement, visible: boolean) => {
   button.innerHTML = visible ? EYE_OPEN_ICON : EYE_CLOSED_ICON;
   button.title = visible ? "隐藏 API Key" : "显示 API Key";
   button.setAttribute("aria-label", button.title);
+};
+
+const copyFeedbackTimers = new WeakMap<HTMLButtonElement, number>();
+
+const flashCopyResult = (button: HTMLButtonElement, ok: boolean, message: string) => {
+  const originalTitle = "复制";
+  button.innerHTML = ok ? CHECK_ICON : CROSS_ICON;
+  button.title = message;
+  button.style.color = ok ? ACCENT : "#dc2626";
+  const previous = copyFeedbackTimers.get(button);
+  if (previous !== undefined) globalThis.clearTimeout(previous);
+  copyFeedbackTimers.set(button, globalThis.setTimeout(() => {
+    copyFeedbackTimers.delete(button);
+    button.innerHTML = COPY_ICON;
+    button.title = originalTitle;
+    button.style.color = "";
+  }, 1500) as unknown as number);
 };
 
 const setButtonDisabled = (button: HTMLButtonElement, disabled: boolean) => {
@@ -429,6 +461,8 @@ const bindPressAction = (element: HTMLElement, action: () => void) => {
     (event) => {
       event.preventDefault();
       event.stopPropagation();
+      // 仅响应主键（左键 / 触摸），右键、中键不触发
+      if ((event as PointerEvent).button !== 0) return;
       runAction();
     },
     true
@@ -735,7 +769,7 @@ const createDrawer = () => {
 
   const themeMenu = document.createElement("div");
   themeMenu.style.position = "fixed";
-  themeMenu.style.width = "180px";
+  themeMenu.style.width = "248px";
   themeMenu.style.background = "#fff";
   themeMenu.style.borderRadius = "14px";
   themeMenu.style.boxShadow = "0 18px 30px rgba(0,0,0,0.15)";
@@ -937,6 +971,7 @@ const createDrawer = () => {
     { value: "bold", label: "大胆" }
   ]);
   const formattingExtraInstructionsInput = createTextArea(4);
+  styleControl(formattingExtraInstructionsInput);
 
   const maxImagesSelect = createSelect([
     { value: "2", label: "2 张" },
@@ -964,10 +999,40 @@ const createDrawer = () => {
   chunkMaxUnitsInput.min = "1";
   chunkMaxUnitsInput.step = "1";
 
+  // 复制：pointerdown 触发（宿主页会吞掉设置面板内的 click），失败时回退 execCommand 并给出可见反馈
+  const bindCopyAction = (button: HTMLButtonElement, getText: () => string) => {
+    bindClickableControl(button);
+    bindPressAction(button, () => {
+      const text = getText().trim();
+      if (!text) {
+        flashCopyResult(button, false, "内容为空");
+        return;
+      }
+      void copyPlainText(text).then((ok) => flashCopyResult(button, ok, ok ? "已复制" : "复制失败，请手动选择复制"));
+    });
+  };
+
+  const createCopyButton = (): HTMLButtonElement => {
+    const button = createIconButton();
+    button.innerHTML = COPY_ICON;
+    button.title = "复制";
+    button.setAttribute("aria-label", "复制");
+    return button;
+  };
+
+  const apiKeyCopyButton = createCopyButton();
+  apiKeyCopyButton.style.position = "absolute";
+  apiKeyCopyButton.style.top = "50%";
+  apiKeyCopyButton.style.right = "8px";
+  apiKeyCopyButton.style.transform = "translateY(-50%)";
+  apiKeyToggleButton.style.right = "40px";
+  bindCopyAction(apiKeyCopyButton, () => apiKeyInput.value);
+
   styleControl(apiKeyInput);
-  apiKeyInput.style.paddingRight = "42px";
+  apiKeyInput.style.paddingRight = "76px";
   apiKeyControl.appendChild(apiKeyInput);
   apiKeyControl.appendChild(apiKeyToggleButton);
+  apiKeyControl.appendChild(apiKeyCopyButton);
 
   // 给 input/textarea 包一层 relative 容器并附加复制按钮
   // textarea 多行，按钮固定在右上角；input 单行，按钮垂直居中
@@ -980,10 +1045,7 @@ const createDrawer = () => {
     control.style.display = "flex";
     control.style.alignItems = isTextArea ? "flex-start" : "center";
     control.style.width = "100%";
-    const copyButton = createIconButton();
-    copyButton.innerHTML = COPY_ICON;
-    copyButton.title = "复制";
-    copyButton.setAttribute("aria-label", "复制");
+    const copyButton = createCopyButton();
     copyButton.style.position = "absolute";
     copyButton.style.right = "8px";
     if (isTextArea) {
@@ -992,13 +1054,7 @@ const createDrawer = () => {
       copyButton.style.top = "50%";
       copyButton.style.transform = "translateY(-50%)";
     }
-    copyButton.addEventListener("click", async () => {
-      const text = input.value.trim();
-      if (!text) return;
-      await navigator.clipboard.writeText(text).catch(() => {});
-      copyButton.innerHTML = CHECK_ICON;
-      globalThis.setTimeout(() => { copyButton.innerHTML = COPY_ICON; }, 1500);
-    });
+    bindCopyAction(copyButton, () => input.value);
     input.style.paddingRight = "42px";
     control.appendChild(input);
     control.appendChild(copyButton);
@@ -1008,7 +1064,7 @@ const createDrawer = () => {
   const baseURLInput = createTextInput("url");
   baseURLInput.placeholder = "留空使用 OpenAI 官方接口（如 https://your-gateway.com/v1）";
   styleControl(baseURLInput);
-  const { control: baseURLControl, copyButton: baseURLCopyButton } = makeInputControl(baseURLInput);
+  const { control: baseURLControl } = makeInputControl(baseURLInput);
 
   styleControl(modelInput);
 
@@ -1051,15 +1107,38 @@ const createDrawer = () => {
     return { wrapper, copyButton };
   };
 
-  const { wrapper: modelWrapper, copyButton: modelCopyButton } = makeModelField(modelInput, TRANSLATION_MODELS);
+  const { wrapper: modelWrapper } = makeModelField(modelInput, TRANSLATION_MODELS);
 
   const imageModelInput = createTextInput("text");
   imageModelInput.placeholder = "输入图片模型 ID";
   styleControl(imageModelInput);
-  const { wrapper: imageModelWrapper, copyButton: imageModelCopyButton } = makeModelField(imageModelInput, IMAGE_MODELS);
+  const { wrapper: imageModelWrapper } = makeModelField(imageModelInput, IMAGE_MODELS);
 
-  const { control: illustrationStylePromptControl, copyButton: illustrationStylePromptCopyButton } =
-    makeInputControl(illustrationStylePromptInput);
+  const { control: illustrationStylePromptControl } = makeInputControl(illustrationStylePromptInput);
+  const { control: formattingExtraInstructionsControl } = makeInputControl(formattingExtraInstructionsInput);
+  formattingExtraInstructionsInput.rows = 5;
+
+  // 提示词字段：输入框 + "恢复默认"
+  const withRestoreDefault = (control: HTMLElement, input: HTMLTextAreaElement, defaultValue: string) => {
+    const wrapper = document.createElement("div");
+    wrapper.style.display = "flex";
+    wrapper.style.flexDirection = "column";
+    wrapper.style.alignItems = "flex-end";
+    wrapper.style.gap = "6px";
+    wrapper.style.width = "100%";
+    const restore = createButton("恢复默认", "ghost");
+    restore.style.padding = "4px 10px";
+    restore.style.fontSize = "12px";
+    bindClickableControl(restore);
+    bindPressAction(restore, () => {
+      input.value = defaultValue;
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    control.style.width = "100%";
+    wrapper.appendChild(control);
+    wrapper.appendChild(restore);
+    return wrapper;
+  };
 
   const basicFields = [
     createField("API Key", apiKeyControl, "", false),
@@ -1081,15 +1160,20 @@ const createDrawer = () => {
   ];
   const formattingFields = [
     createField("排版力度", aggressivenessSelect, "保守=高置信才改；大胆=积极重构版式"),
-    createField("额外说明", formattingExtraInstructionsInput, "对智能排版的额外要求（不会改动正文文字）")
+    createField(
+      "排版提示词",
+      withRestoreDefault(formattingExtraInstructionsControl, formattingExtraInstructionsInput, DEFAULT_FORMATTING_INSTRUCTIONS),
+      "对智能排版的额外要求（不会改动正文文字）；清空则使用默认值",
+      false
+    )
   ];
   const illustrationFields = [
     createField("图片模型", imageModelWrapper, "生图使用；留空回退到语言模型", false),
     createField("配图数量上限", maxImagesSelect, "16:9 宽图；生图较慢，数量越多越慢"),
     createField(
       "风格提示词",
-      illustrationStylePromptControl,
-      "英文最佳，拼到内置极简风之后。例：warm pastel tones, hand-drawn texture",
+      withRestoreDefault(illustrationStylePromptControl, illustrationStylePromptInput, DEFAULT_ILLUSTRATION_STYLE_PROMPT),
+      "英文最佳，拼到内置极简风之后；清空则使用默认值。例：warm pastel tones, hand-drawn texture",
       false
     )
   ];
@@ -1119,9 +1203,6 @@ const createDrawer = () => {
     illustrationStylePromptInput
   ].forEach((control) => bindEditableControl(control));
   bindClickableControl(apiKeyToggleButton);
-  [baseURLCopyButton, modelCopyButton, imageModelCopyButton, illustrationStylePromptCopyButton].forEach((btn) =>
-    bindClickableControl(btn)
-  );
 
   const settingsFooter = document.createElement("div");
   settingsFooter.style.display = "flex";
@@ -1298,6 +1379,83 @@ export const initDrawer = () => {
   let currentTheme = THEME_PRESETS[0];
   let currentFont = FONT_PRESETS[0];
   let fontScale = 1;
+  let preferencesLoadPromise: Promise<void> | null = null;
+
+  const currentPreferences = (): PreviewPreferences => ({
+    themeId: currentTheme.id,
+    fontId: currentFont.id,
+    fontScale
+  });
+
+  // 主题/字体/字号持久化到 chrome.storage.local，重载扩展或刷新页面后保持上次选择
+  const loadPreviewPreferences = (): Promise<void> => {
+    if (!preferencesLoadPromise) {
+      preferencesLoadPromise = (async () => {
+        if (!chrome.storage?.local) return;
+        try {
+          const stored = await chrome.storage.local.get(PREVIEW_PREFERENCES_KEY);
+          const prefs = normalizePreviewPreferences(stored[PREVIEW_PREFERENCES_KEY], currentPreferences(), {
+            themeIds: THEME_PRESETS.map((preset) => preset.id),
+            fontIds: FONT_PRESETS.map((font) => font.id)
+          });
+          currentTheme = THEME_PRESETS.find((preset) => preset.id === prefs.themeId) ?? currentTheme;
+          currentFont = FONT_PRESETS.find((font) => font.id === prefs.fontId) ?? currentFont;
+          fontScale = prefs.fontScale;
+        } catch (error) {
+          console.warn("读取排版偏好失败，使用默认主题：", error);
+        }
+      })();
+    }
+    return preferencesLoadPromise;
+  };
+
+  void loadPreviewPreferences();
+
+  const savePreviewPreferences = () => {
+    if (!chrome.storage?.local) return;
+    void chrome.storage.local
+      .set({ [PREVIEW_PREFERENCES_KEY]: currentPreferences() })
+      .catch((error) => console.warn("保存排版偏好失败：", error));
+  };
+
+  // AI 结果缓存存 chrome.storage.local：扩展重载 / 浏览器重启后仍可秒恢复，按 TTL 与条数淘汰
+  const resultCache = (kind: keyof typeof RESULT_CACHE_LIMITS): PersistentCache | null =>
+    chrome.storage?.local
+      ? createPersistentCache(chrome.storage.local, {
+          ttlMs: RESULT_CACHE_TTL_MS,
+          maxEntries: RESULT_CACHE_LIMITS[kind],
+          indexKey: `resultCacheIndex:${kind}`
+        })
+      : null;
+
+  const readCacheSafely = async <T extends { createdAt: number }>(
+    kind: keyof typeof RESULT_CACHE_LIMITS,
+    key: string
+  ): Promise<T | null> => {
+    try {
+      return (await resultCache(kind)?.get<T>(key)) ?? null;
+    } catch (error) {
+      console.warn(`读取${kind}缓存失败：`, error);
+      return null;
+    }
+  };
+
+  const writeCacheSafely = async <T extends { createdAt: number }>(
+    kind: keyof typeof RESULT_CACHE_LIMITS,
+    key: string,
+    entry: T
+  ): Promise<void> => {
+    try {
+      await resultCache(kind)?.set(key, entry);
+    } catch (error) {
+      // 配额超限等：不缓存，不影响主流程
+      console.warn(`写入${kind}缓存失败：`, error);
+    }
+  };
+
+  const removeCacheSafely = async (kind: keyof typeof RESULT_CACHE_LIMITS, key: string): Promise<void> => {
+    await resultCache(kind)?.remove(key).catch(() => undefined);
+  };
 
   let translationSettings = DEFAULT_TRANSLATION_SETTINGS;
   let settingsLoadPromise: Promise<void> | null = null;
@@ -1940,27 +2098,22 @@ export const initDrawer = () => {
 
   const readTranslationCache = async (): Promise<TranslationCacheEntry | null> => {
     const cacheKey = getTranslationCacheKey();
-    if (!cacheKey || !chrome.storage.session) return null;
-
-    const stored = await chrome.storage.session.get(cacheKey);
-    return (stored[cacheKey] as TranslationCacheEntry | undefined) ?? null;
+    if (!cacheKey) return null;
+    return readCacheSafely<TranslationCacheEntry>("translation", cacheKey);
   };
 
   const persistTranslationCache = async (doc: Doc) => {
     const cacheKey = getTranslationCacheKey();
-    if (!cacheKey || !chrome.storage.session) return;
-
-    await chrome.storage.session.set({
-      [cacheKey]: {
-        translatedDoc: doc,
-        createdAt: Date.now()
-      } satisfies TranslationCacheEntry
+    if (!cacheKey) return;
+    await writeCacheSafely<TranslationCacheEntry>("translation", cacheKey, {
+      translatedDoc: doc,
+      createdAt: Date.now()
     });
   };
 
   const applyTranslatedDoc = async (
     nextTranslatedDoc: Doc,
-    options?: { activateTranslated?: boolean; statusMessage?: string }
+    options?: { activateTranslated?: boolean; statusMessage?: string; persist?: boolean }
   ) => {
     translatedDoc = nextTranslatedDoc;
     translationState = "success";
@@ -1974,7 +2127,8 @@ export const initDrawer = () => {
     if (options?.statusMessage) {
       setStatusMessage(options.statusMessage, "success");
     }
-    await persistTranslationCache(nextTranslatedDoc);
+    // 从缓存恢复时不回写：避免每次打开抽屉整份重写，并让 TTL 按生成时间正常过期
+    if (options?.persist ?? true) await persistTranslationCache(nextTranslatedDoc);
   };
 
   const maybeRestoreCachedTranslation = async (
@@ -1987,6 +2141,7 @@ export const initDrawer = () => {
     if (!cached?.translatedDoc) return false;
 
     await applyTranslatedDoc(cached.translatedDoc, {
+      persist: false,
       activateTranslated,
       statusMessage: notify ? "已加载缓存译文" : ""
     });
@@ -2008,17 +2163,13 @@ export const initDrawer = () => {
     `${FORMATTING_CACHE_PREFIX}:${hashDoc(base)}:${hashFormatting(buildEffectiveFormattingSettings())}`;
 
   const readFormattingCache = async (base: Doc): Promise<FormattingCacheEntry | null> => {
-    if (!chrome.storage.session) return null;
-    const key = getFormattingCacheKey(base);
-    const stored = await chrome.storage.session.get(key);
-    return (stored[key] as FormattingCacheEntry | undefined) ?? null;
+    return readCacheSafely<FormattingCacheEntry>("formatting", getFormattingCacheKey(base));
   };
 
   const persistFormattingCache = async (base: Doc, operations: FormattingOperation[]) => {
-    if (!chrome.storage.session) return;
-    const key = getFormattingCacheKey(base);
-    await chrome.storage.session.set({
-      [key]: { operations, createdAt: Date.now() } satisfies FormattingCacheEntry
+    await writeCacheSafely<FormattingCacheEntry>("formatting", getFormattingCacheKey(base), {
+      operations,
+      createdAt: Date.now()
     });
   };
 
@@ -2088,6 +2239,9 @@ export const initDrawer = () => {
       syncControlState();
       return;
     }
+
+    // 已从持久缓存恢复（按当前设置命中）时，不再用后台旧结果覆盖：后台状态只按原文哈希匹配，可能来自旧设置
+    if (formatOps && state.jobId !== formattingJobId) return;
 
     if (state.status === "success" && state.operations) {
       if (discardedFormattingSources.has(state.sourceHash) && state.jobId !== formattingJobId) return;
@@ -2178,6 +2332,35 @@ export const initDrawer = () => {
     return formattingPort;
   };
 
+  // 打开抽屉时自动恢复上次的排版 / 配图：结果已持久化，扩展重载或浏览器重启后也能直接看到增强稿
+  const enhancementBusy = (): boolean =>
+    Boolean(formatOps || illustrations) || formattingState === "formatting" || illustrationState === "illustrating";
+
+  const restoreCachedEnhancements = async () => {
+    if (enhancementBusy()) return;
+    const base = currentBaseDoc();
+    if (!base) return;
+    await loadFormattingSettings();
+    await loadIllustrationSettings();
+    const baseMode: PreviewContentMode =
+      contentMode === "translated" && translatedDoc ? "translated" : "original";
+    const [formatting, illustration] = await Promise.all([readFormattingCache(base), readIllustrationCache(base)]);
+    // 读取期间用户可能已手动开始排版/配图或切换了页面，此时不覆盖
+    if (enhancementBusy() || base !== currentBaseDoc()) return;
+    const restoredParts: string[] = [];
+    if (formatting?.operations) {
+      await setFormatOps(base, baseMode, formatting.operations, { persist: false });
+      restoredParts.push("排版");
+    }
+    if (illustration?.items?.length) {
+      await setIllustrationItems(base, baseMode, illustration.items, { persist: false });
+      restoredParts.push("配图");
+    }
+    if (restoredParts.length > 0) {
+      setStatusMessage(`已恢复上次的${restoredParts.join("与")}结果`, "success");
+    }
+  };
+
   const syncFormattingStateFromBackground = () => {
     if (!sourceDoc || !sourceHash) return;
     ensureFormattingPort().postMessage({ type: "formatting/query-state" });
@@ -2265,10 +2448,7 @@ export const initDrawer = () => {
     if (showMessage) {
       setStatusMessage("已清空排版，可重新点击智能排版", "info");
     }
-    if (base && chrome.storage.session) {
-      const key = getFormattingCacheKey(base);
-      await chrome.storage.session.remove(key).catch(() => undefined);
-    }
+    if (base) await removeCacheSafely("formatting", getFormattingCacheKey(base));
   };
 
   // === 智能配图编排（配图锚定 base 块索引，与排版可叠加且顺序无关） ===
@@ -2286,24 +2466,15 @@ export const initDrawer = () => {
     )}`;
 
   const readIllustrationCache = async (base: Doc): Promise<IllustrationCacheEntry | null> => {
-    if (!chrome.storage.session) return null;
-    const key = getIllustrationCacheKey(base);
-    const stored = await chrome.storage.session.get(key);
-    return (stored[key] as IllustrationCacheEntry | undefined) ?? null;
+    return readCacheSafely<IllustrationCacheEntry>("illustration", getIllustrationCacheKey(base));
   };
 
-  // 配图含 base64，体积大；session 可能触配额 → try/catch 吞错降级为不缓存
+  // 配图含 base64，体积大；写入失败（配额）时降级为不缓存
   const persistIllustrationCache = async (base: Doc, items: IllustrationItem[]) => {
-    if (!chrome.storage.session) return;
-    const key = getIllustrationCacheKey(base);
-    try {
-      await chrome.storage.session.set({
-        [key]: { items, createdAt: Date.now() } satisfies IllustrationCacheEntry
-      });
-    } catch (error) {
-      // 配额超限：不缓存，不影响主流程
-      console.warn("配图缓存写入失败（可能超出 session 配额）：", error);
-    }
+    await writeCacheSafely<IllustrationCacheEntry>("illustration", getIllustrationCacheKey(base), {
+      items,
+      createdAt: Date.now()
+    });
   };
 
   const setIllustrationItems = async (
@@ -2342,7 +2513,7 @@ export const initDrawer = () => {
   };
 
   // 已生成配图后，用户不想要了：从增强稿里移除配图（排版结果保留），并清掉对应缓存，
-  // 避免下次点「智能配图」时又从 session 缓存里把刚移除的配图原样恢复回来。
+  // 避免下次点「智能配图」或重新打开抽屉时又从缓存里把刚移除的配图原样恢复回来。
   const removeIllustrations = async (showMessage = true) => {
     if (!illustrations) return;
     const base = enhancedBaseDoc();
@@ -2365,10 +2536,7 @@ export const initDrawer = () => {
     if (showMessage) {
       setStatusMessage("已移除配图", "info");
     }
-    if (base && chrome.storage.session) {
-      const key = getIllustrationCacheKey(base);
-      await chrome.storage.session.remove(key).catch(() => undefined);
-    }
+    if (base) await removeCacheSafely("illustration", getIllustrationCacheKey(base));
   };
 
   const cancelActiveIllustration = (showMessage = true) => {
@@ -2416,6 +2584,8 @@ export const initDrawer = () => {
       syncControlState();
       return;
     }
+
+    if (illustrations && state.jobId !== illustrationJobId) return;
 
     if (state.status === "success" && state.items) {
       if (discardedIllustrationSources.has(state.sourceHash) && state.jobId !== illustrationJobId) return;
@@ -3134,20 +3304,41 @@ export const initDrawer = () => {
         return;
       }
       const rect = drawerRefs!.themeButton.getBoundingClientRect();
-      const menuWidth = 180;
+      const menuWidth = 248;
       const left = Math.min(rect.left, Math.max(8, window.innerWidth - menuWidth - 8));
       menu.style.top = `${rect.bottom + 6}px`;
       menu.style.left = `${left}px`;
       menu.style.display = "block";
     });
 
-    THEME_PRESETS.forEach((preset) => {
+    const appendThemeGroupLabel = (text: string) => {
+      const label = document.createElement("div");
+      label.textContent = text;
+      label.style.cssText = "font-size:11px;font-weight:700;color:#9ca3af;padding:8px 10px 6px;letter-spacing:0.04em;";
+      drawerRefs!.themeMenu.appendChild(label);
+    };
+
+    THEME_PRESETS.forEach((preset, index) => {
+      const isModern = MODERN_THEME_IDS.has(preset.id);
+      const previous = THEME_PRESETS[index - 1];
+      if (index === 0 || (previous && MODERN_THEME_IDS.has(previous.id) !== isModern)) {
+        appendThemeGroupLabel(isModern ? "现代主题" : "经典主题");
+      }
       const item = document.createElement("div");
-      item.textContent = preset.label;
+      const name = document.createElement("div");
+      name.textContent = preset.label;
+      name.style.fontWeight = "600";
+      item.appendChild(name);
+      if (preset.description) {
+        const note = document.createElement("div");
+        note.textContent = preset.description;
+        note.style.cssText = "font-size:11px;color:#6b7280;margin-top:2px;line-height:1.4;font-weight:400;";
+        item.appendChild(note);
+      }
       item.title = preset.description ?? preset.label;
       item.style.borderLeft = `3px solid ${preset.colors.link ?? DEFAULT_COLORS.link}`;
       item.style.marginBottom = "4px";
-      item.style.padding = "10px 12px";
+      item.style.padding = "8px 12px";
       item.style.fontSize = "13px";
       item.style.borderRadius = "10px";
       item.style.cursor = "pointer";
@@ -3161,6 +3352,7 @@ export const initDrawer = () => {
       item.addEventListener("click", (event) => {
         event.stopPropagation();
         currentTheme = preset;
+        savePreviewPreferences();
         updateThemeButton();
         updateThemeMenu();
         drawerRefs?.themeMenu.style.setProperty("display", "none");
@@ -3174,6 +3366,7 @@ export const initDrawer = () => {
     drawerRefs.fontButtons.forEach(({ font, button }) => {
       button.addEventListener("click", () => {
         currentFont = font;
+        savePreviewPreferences();
         updateFontButtons();
         rebuildRenderedContent();
         syncControlState();
@@ -3181,13 +3374,15 @@ export const initDrawer = () => {
     });
 
     drawerRefs.sizeDown.addEventListener("click", () => {
-      fontScale = Math.max(0.9, Math.round((fontScale - 0.05) * 100) / 100);
+      fontScale = Math.max(FONT_SCALE_MIN, Math.round((fontScale - 0.05) * 100) / 100);
+      savePreviewPreferences();
       rebuildRenderedContent();
       syncControlState();
     });
 
     drawerRefs.sizeUp.addEventListener("click", () => {
-      fontScale = Math.min(1.15, Math.round((fontScale + 0.05) * 100) / 100);
+      fontScale = Math.min(FONT_SCALE_MAX, Math.round((fontScale + 0.05) * 100) / 100);
+      savePreviewPreferences();
       rebuildRenderedContent();
       syncControlState();
     });
@@ -3427,13 +3622,18 @@ export const initDrawer = () => {
     document.body.appendChild(drawer);
     document.body.appendChild(drawerRefs.themeMenu);
 
-    // 如果有缓存内容，立即渲染到新 drawer DOM，避免重新提取期间空白
-    if (sourceDoc) {
-      renderPreview();
-    }
-
     void (async () => {
+      // 先读偏好再首次渲染，避免默认主题闪一下（偏好在 initDrawer 时已开始预读，通常已就绪）
+      await loadPreviewPreferences();
+      updateThemeButton();
+      updateThemeMenu();
+      updateFontButtons();
+      // 如果有缓存内容，立即渲染到新 drawer DOM，避免重新提取期间空白
+      if (sourceDoc) rebuildRenderedContent();
       await refreshSource({ announce: false, activateCachedTranslation: false });
+      await restoreCachedEnhancements().catch((error: unknown) =>
+        console.warn("恢复排版/配图缓存失败：", error)
+      );
       syncTranslationStateFromBackground();
       syncFormattingStateFromBackground();
       syncIllustrationStateFromBackground();
